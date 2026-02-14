@@ -26,6 +26,7 @@ void HalM5Unified::update() {
 bool HalM5Unified::readIMU(imu_data_t* data) {
     if (!M5.Imu.isEnabled()) return false;
 
+    M5.Imu.update();
     m5::imu_data_t imu;
     M5.Imu.getImuData(&imu);
 

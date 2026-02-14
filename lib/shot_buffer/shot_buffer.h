@@ -11,7 +11,7 @@ typedef struct __attribute__((packed)) {
     uint8_t  shot_number;      // Shot index within session
     uint8_t  form_flags;       // Bitfield: cant_ok, elevation_ok, draw_ok, fatigue_flag
     int16_t  heading;          // Compass heading in 0.01 degrees (0xFFFF = no mag)
-    uint16_t reserved;         // Future use
+    uint32_t reserved;         // Future use (padding to 20 bytes for BLE)
 } ShotPacket_t;
 
 // Form flag bits

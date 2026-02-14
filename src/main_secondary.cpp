@@ -1,7 +1,7 @@
 #ifdef ROLE_SECONDARY
 
+#include <Arduino.h>
 #include <hal_m5unified.h>
-#include <cstdio>
 
 static HalM5Unified hal;
 static uint32_t lastPrintTime = 0;

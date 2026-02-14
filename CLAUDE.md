@@ -21,33 +21,73 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Environment
 
-**CRITICAL**: This project uses a MiniConda virtual environment. **NEVER** install packages into native Python.
+**Platform**: PlatformIO + C++ (Arduino framework), targeting ESP32.
 
-```
-Virtual env: E:\MiniConda\envs\biomotum
-Python:      3.13.1
-```
+**PlatformIO CLI path**: `C:/Users/Zijie Jin/.platformio/penv/Scripts/pio.exe`
 
-All commands MUST use the full venv Python path:
+**Hardware**: Two M5StickC devices (Plus / Plus2 mix). The firmware auto-detects the variant via M5Unified.
+
+**Key library**: [M5Unified](https://github.com/m5stack/M5Unified) — unified API for IMU, display, speaker, buttons, and power across M5StickC Plus and Plus2.
+
+### Build & Test Commands
+
 ```bash
-# Run the application
-"E:\MiniConda\envs\biomotum\python.exe" main.py
+# Build primary firmware
+"C:/Users/Zijie Jin/.platformio/penv/Scripts/pio.exe" run -e primary
 
-# Install dependencies (INTO VENV ONLY)
-"E:\MiniConda\envs\biomotum\python.exe" -m pip install <package>
+# Build secondary firmware
+"C:/Users/Zijie Jin/.platformio/penv/Scripts/pio.exe" run -e secondary
 
-# Run tests
-"E:\MiniConda\envs\biomotum\python.exe" -m pytest tests/ -v
+# Run native unit tests
+"C:/Users/Zijie Jin/.platformio/penv/Scripts/pio.exe" test -e native_test
+
+# Upload to device (primary example)
+"C:/Users/Zijie Jin/.platformio/penv/Scripts/pio.exe" run -e primary -t upload
+
+# Serial monitor
+"C:/Users/Zijie Jin/.platformio/penv/Scripts/pio.exe" device monitor -b 115200
 ```
 
-**Current dependencies**: pygame, cnlunar, pytest, moderngl, pyrr, numpy
+### PlatformIO Environments (platformio.ini)
+
+| Environment | Purpose | Board | Key Build Flag |
+|-------------|---------|-------|----------------|
+| `primary` | Primary device firmware | m5stick-c | `-DROLE_PRIMARY` |
+| `secondary` | Secondary device firmware | m5stick-c | `-DROLE_SECONDARY` |
+| `native_test` | Desktop unit tests (Unity) | native | `-DNATIVE_TEST` |
 
 ## Permissions
 
-- **Bash**: You may run ALL bash commands freely (dangerously skip permissions) **UNLESS** you are deleting files/folders or installing non-Python things. Tests, pip installs into venv, running the app, git commands, etc. are all fine without asking.
+- **Bash**: You may run ALL bash commands freely (dangerously skip permissions) **UNLESS** you are deleting files/folders or installing non-PlatformIO things. Builds, tests, uploads, serial monitor, git commands, etc. are all fine without asking.
 - **File edits**: Proceed freely for implementation work.
 
 ## Architecture
 
-### Current Structure
+### Project Structure
 
+```
+wearable m5stick/
+├── platformio.ini              # 3 environments: primary, secondary, native_test
+├── src/
+│   ├── main_primary.cpp        # Primary device entry point
+│   └── main_secondary.cpp      # Secondary device entry point
+├── lib/
+│   ├── hal/                    # Hardware abstraction (M5Unified wrapper)
+│   ├── imu_math/               # Sensor fusion, angle calculation
+│   ├── shot_detect/            # Shot detection state machine
+│   ├── feedback/               # Beep pattern engine
+│   ├── shot_buffer/            # Ring buffer + ShotPacket_t
+│   ├── session/                # Session state machine + NVS config
+│   ├── espnow_comm/            # ESP-NOW protocol (future)
+│   ├── display_ui/             # Display screens (future)
+│   ├── menu/                   # Menu system (future)
+│   └── ble_relay/              # NimBLE GATT service (future)
+├── test/
+│   ├── test_imu_math/          # Native unit tests
+│   ├── test_shot_detect/
+│   └── test_shot_buffer/
+└── claude-memory/
+    ├── DEVELOPMENT_PLAN.md
+    ├── achievements.md
+    └── overall_design.md
+```

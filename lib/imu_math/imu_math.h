@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 namespace imu_math {
 
