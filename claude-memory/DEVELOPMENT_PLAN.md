@@ -380,45 +380,53 @@ Two-device communication: Secondary streams IMU data to Primary at 50Hz via ESP-
 
 ### Substeps
 
-**7.1** Define ESP-NOW message types:
+**7.1** Define ESP-NOW message types and packet format:
 ```cpp
-enum MsgType : uint8_t { MSG_IMU_DATA, MSG_STATUS, MSG_PAIR_REQUEST, MSG_PAIR_ACK };
+enum ESPNowMsgType : uint8_t { MSG_IMU_DATA, MSG_STATUS, MSG_PAIR_REQUEST, MSG_PAIR_ACK };
 
-struct ESPNowPacket {
-    MsgType type;
+// 18 bytes, packed — broadcast with magic number validation
+struct __attribute__((packed)) ESPNowPacket {
+    uint8_t type;           // ESPNowMsgType
+    uint32_t magic;         // 0x41524348 ("ARCH") — filters foreign packets
     uint32_t timestamp_ms;
-    float accel[3];
-    float gyro[3];
     float pitch;
     float roll;
+    uint8_t battery;        // 0-100% — lets Primary display Secondary battery
 };
 ```
+- No raw accel/gyro — Primary only needs Secondary's computed angles
+- Magic number prevents processing packets from other ESP-NOW systems
 
 **7.2** Implement ESP-NOW initialization:
-- `initPrimary()` — register receive callback, set WiFi channel
-- `initSecondary(uint8_t* primaryMAC)` — add peer, start sending
-- WiFi must be in STA mode for ESP-NOW
+- `initPrimary(channel)` — `WiFi.mode(WIFI_STA)`, `esp_now_init()`, register receive callback
+- `initSecondary(channel)` — same + add broadcast peer (`FF:FF:FF:FF:FF:FF`)
+- Broadcast approach: no hardcoded MACs needed, works out of the box
+- `MSG_PAIR_REQUEST`/`MSG_PAIR_ACK` types reserved in enum for future unicast upgrade
 
-**7.3** Implement pairing:
-- Option A (simple): Hardcoded MAC addresses via `#define` in platformio.ini build_flags
-- Option B (user-friendly): Button-press pairing (Secondary broadcasts `PAIR_REQUEST`, Primary responds with `PAIR_ACK`)
-- Implement Option A first, Option B as enhancement
+**7.3** Implement communication API:
+- `sendIMUData(pitch, roll, battery)` — pack and broadcast ESPNowPacket
+- Receive callback: validate magic + size, copy to static ESPNowIMUData buffer
+- `getLatestData()` — returns latest received data
+- `isSecondaryConnected()` — `(now - last_recv) < 500ms`
 
 **7.4** Secondary main loop (`main_secondary.cpp`):
-- Read local IMU → compute pitch/roll
-- Pack into `ESPNowPacket`
-- Send via `esp_now_send()` at 50Hz (every 20ms)
-- Display: "Sending..." + packet count
+- Add ComplementaryFilter for local IMU processing
+- Read IMU every loop, run filter at full speed
+- Send via `espnow_comm::sendIMUData()` at 50Hz (every 20ms)
+- Display: pitch/roll + TX count at 5Hz
+- Serial: pitch/roll + TX count at 5Hz
 
 **7.5** Primary receives and processes:
-- Receive callback stores latest Secondary packet
-- Main loop: fuse Primary IMU + Secondary IMU data
-- Display both sets of angles
-- Serial: "Pri Pitch=XX Roll=XX | Sec Pitch=XX Roll=XX"
+- `espnow_comm::initPrimary(1)` in setup
+- Each loop: `getLatestData()` + `isSecondaryConnected()`
+- Wire `secondaryData.pitch` as `drawAngle` into `session->recordShot()`
+- Display: Secondary angles + connection status + Secondary battery
+- Serial: "Pri P:XX R:XX | Sec P:XX R:XX Batt:XX%"
 
 **7.6** Handle connection state:
 - Primary tracks "last received" timestamp
 - If no packet for >500ms → show "Secondary: DISCONNECTED" on display
+- Auto-reconnects when Secondary resumes broadcasting
 
 ### Verification
 - [ ] Upload `primary` env to device 1, `secondary` env to device 2

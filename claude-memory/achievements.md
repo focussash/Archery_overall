@@ -98,3 +98,40 @@ Verification:
 - [x] Shots during session are counted with form evaluation — confirmed by user
 - [x] Hold BtnA stops session (falling tone) — confirmed by user
 - [ ] NVS persistence across reboot (deferred to SP9 menu system)
+
+## Subproject 7: ESP-NOW Communication
+**Status: VERIFIED**
+
+Files created:
+- lib/espnow_comm/espnow_comm.h (ESPNowPacket 18 bytes, namespace API)
+- lib/espnow_comm/espnow_comm.cpp (broadcast ESP-NOW, magic validation)
+
+Files modified:
+- src/main_secondary.cpp (rewritten: ComplementaryFilter + 50Hz ESP-NOW streaming)
+- src/main_primary.cpp (updated: ESP-NOW receive, secondary data display, drawAngle wiring)
+- claude-memory/DEVELOPMENT_PLAN.md (SP7 section updated with deviations)
+
+Deviations from original plan:
+- Broadcast (FF:FF:FF:FF:FF:FF) with magic 0x41524348 instead of hardcoded MACs
+- Packet reduced to 18 bytes (type, magic, timestamp, pitch, roll, battery) — no raw accel/gyro
+- Added battery field so Primary can display Secondary's battery level
+
+Implementation details:
+- ESP-IDF 4.x callback signature (3-parameter: mac, data, len)
+- Secondary sends at 50Hz (20ms interval), display at 5Hz (200ms)
+- Primary receives via callback, validates magic + size, stores in static buffer
+- isSecondaryConnected() checks 500ms timeout on last received packet
+- drawAngle from Secondary's pitch is wired into session->recordShot()
+- Primary display: top bar shows "Sec P:XX R:XX B:XX%" or "Sec: DISCONNECTED"
+
+Verification:
+- [x] `pio run -e primary` — SUCCESS (RAM 14.8%, Flash 71.5%)
+- [x] `pio run -e secondary` — SUCCESS (RAM 14.4%, Flash 71.3%)
+- [x] Upload primary to device 1, secondary to device 2
+- [x] Primary serial shows both devices' IMU data
+- [x] Moving Secondary → Primary sees angle changes
+- [x] Turn off Secondary → "DISCONNECTED" after 500ms — confirmed by user
+- [x] Turn on Secondary → reconnects automatically — confirmed by user
+- [x] Shots during session use Secondary's draw angle (Draw:3.4 etc. in shot log)
+- [x] Session start/stop works (15 shots in 17s session)
+- [x] Form evaluation flags (Cant/Elev/Draw OK/EXCEEDED) working

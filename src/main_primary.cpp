@@ -7,6 +7,7 @@
 #include <feedback.h>
 #include <shot_buffer.h>
 #include <session.h>
+#include <espnow_comm.h>
 
 static HalM5Unified hal;
 static ComplementaryFilter filter(0.98f);
@@ -28,6 +29,13 @@ void setup() {
     // Load thresholds from NVS
     configStore.load();
 
+    // Initialize ESP-NOW as Primary (receiver)
+    if (!espnow_comm::initPrimary(1)) {
+        Serial.println("ESP-NOW init FAILED!");
+    } else {
+        Serial.println("ESP-NOW init OK (listening)");
+    }
+
     hal.displayClear();
     hal.displaySetTextSize(2);
     hal.displaySetCursor(10, 10);
@@ -38,12 +46,11 @@ void setup() {
     hal.displaySetTextSize(1);
     hal.displaySetCursor(10, 60);
     hal.displaySetTextColor(0xFFFF);
-    hal.displayPrint("PRIMARY - SP1-6 Test");
+    hal.displayPrint("PRIMARY - SP7");
 
     Serial.println("=== Archery Wearable - PRIMARY ===");
-    Serial.println("SP6: Session + Form Evaluation");
+    Serial.println("SP7: ESP-NOW Two-Device Communication");
     Serial.println("BtnA hold = start/stop session");
-    Serial.println("BtnA tap  = cycle beep patterns");
     Serial.printf("Thresholds: Cant=%.1f Elev=%.1f Draw=%.1f\n",
         configStore.getCantThreshold(),
         configStore.getElevationThreshold(),
@@ -62,15 +69,20 @@ void loop() {
     if (dt <= 0.0f) dt = 0.001f;
     lastLoopTime = now;
 
+    // Primary IMU
     imu_data_t imu;
     if (!hal.readIMU(&imu)) return;
 
-    // Complementary filter
     float accel[3] = {imu.accel.x, imu.accel.y, imu.accel.z};
     float gyro[3] = {imu.gyro.x, imu.gyro.y, imu.gyro.z};
     filter.update(accel, gyro, dt);
     float pitch = filter.getPitch();
     float roll = filter.getRoll();
+
+    // Secondary data (from ESP-NOW)
+    ESPNowIMUData secData = espnow_comm::getLatestData();
+    bool secConnected = espnow_comm::isSecondaryConnected();
+    float drawAngle = secConnected ? secData.pitch : 0.0f;
 
     // Shot detection
     shotDetector.update(accel, gyro, pitch, roll, now);
@@ -79,15 +91,13 @@ void loop() {
         const ShotSnapshot& snap = shotDetector.getLastShot();
 
         if (session->getState() == SessionState::ACTIVE) {
-            // Record shot with form evaluation
-            FormEvaluation eval = session->recordShot(snap, 0.0f, session->getStartTime());
-            Serial.printf(">>> SHOT #%d | P:%.1f R:%.1f | Cant:%s Elev:%s Draw:%s\n",
-                session->getShotCount(), snap.pitch, snap.roll,
+            FormEvaluation eval = session->recordShot(snap, drawAngle, session->getStartTime());
+            Serial.printf(">>> SHOT #%d | P:%.1f R:%.1f Draw:%.1f | Cant:%s Elev:%s Draw:%s\n",
+                session->getShotCount(), snap.pitch, snap.roll, drawAngle,
                 eval.cant_ok ? "OK" : "EXCEEDED",
                 eval.elevation_ok ? "OK" : "EXCEEDED",
                 eval.draw_ok ? "OK" : "EXCEEDED");
 
-            // Play appropriate feedback
             if (eval.cant_ok && eval.elevation_ok && eval.draw_ok) {
                 feedback->play(PatternID::GOOD_FORM);
             } else if (!eval.cant_ok) {
@@ -96,8 +106,8 @@ void loop() {
                 feedback->play(PatternID::DRAW_INCONSISTENT);
             }
         } else {
-            Serial.printf(">>> SHOT (no session) P:%.1f R:%.1f Accel:%.2fg\n",
-                snap.pitch, snap.roll, snap.accel_magnitude);
+            Serial.printf(">>> SHOT (no session) P:%.1f R:%.1f Accel:%.2fg Draw:%.1f\n",
+                snap.pitch, snap.roll, snap.accel_magnitude, drawAngle);
             feedback->play(PatternID::SHOT_DETECTED);
         }
     }
@@ -116,22 +126,31 @@ void loop() {
         }
     }
 
-    // Button B = print current thresholds (debug)
+    // Button B = print debug info
     if (hal.getButtonB()) {
         Serial.printf("Thresholds: Cant=%.1f Elev=%.1f Draw=%.1f | Buffer: %d shots\n",
             configStore.getCantThreshold(),
             configStore.getElevationThreshold(),
             configStore.getDrawAngleThreshold(),
             shotBuffer.getCount());
+        Serial.printf("ESP-NOW: RX=%lu %s\n",
+            espnow_comm::getPacketCount(),
+            secConnected ? "CONNECTED" : "DISCONNECTED");
     }
 
-    // Display update at 10Hz
+    // Display + serial at 10Hz
     if (now - lastPrintTime >= 100) {
         lastPrintTime = now;
 
-        // Serial: pitch/roll + state
-        Serial.printf("P:%.1f R:%.1f | State:%d | Session:%d Shots:%d\n",
+        // Serial
+        Serial.printf("P:%.1f R:%.1f | Sec:%s",
             pitch, roll,
+            secConnected ? "OK" : "---");
+        if (secConnected) {
+            Serial.printf(" P:%.1f R:%.1f B:%d%%",
+                secData.pitch, secData.roll, secData.battery);
+        }
+        Serial.printf(" | St:%d Sess:%d #%d\n",
             (int)shotDetector.getState(),
             (int)session->getState(),
             session->getShotCount());
@@ -139,7 +158,7 @@ void loop() {
         // Display
         hal.displayFillRect(0, 75, hal.getDisplayWidth(), 60, 0);
 
-        // Pitch/Roll
+        // Primary pitch/roll
         hal.displaySetTextSize(2);
         hal.displaySetCursor(5, 78);
         hal.displaySetTextColor(0x07FF);  // Cyan
@@ -148,18 +167,31 @@ void loop() {
         hal.displaySetTextColor(0xFFE0);  // Yellow
         hal.displayPrintf("R:%5.1f", roll);
 
-        // Status bar
+        // Status bar: session + secondary + battery
         hal.displayFillRect(0, 120, hal.getDisplayWidth(), 15, 0);
         hal.displaySetTextSize(1);
         hal.displaySetCursor(5, 122);
+
         if (session->getState() == SessionState::ACTIVE) {
             hal.displaySetTextColor(0x07E0);  // Green
             uint32_t elapsed = session->getElapsedMs(now) / 1000;
-            hal.displayPrintf("REC #%d %lus Batt:%d%%",
-                session->getShotCount(), elapsed, hal.getBatteryLevel());
+            hal.displayPrintf("REC #%d %lus", session->getShotCount(), elapsed);
         } else {
             hal.displaySetTextColor(0xFFFF);
-            hal.displayPrintf("IDLE Batt:%d%%", hal.getBatteryLevel());
+            hal.displayPrintf("IDLE");
+        }
+
+        // Secondary connection status line
+        hal.displayFillRect(0, 0, hal.getDisplayWidth(), 10, 0);
+        hal.displaySetTextSize(1);
+        hal.displaySetCursor(5, 1);
+        if (secConnected) {
+            hal.displaySetTextColor(0x07E0);  // Green
+            hal.displayPrintf("Sec P:%.0f R:%.0f B:%d%%",
+                secData.pitch, secData.roll, secData.battery);
+        } else {
+            hal.displaySetTextColor(0xF800);  // Red
+            hal.displayPrintf("Sec: DISCONNECTED");
         }
     }
 }
