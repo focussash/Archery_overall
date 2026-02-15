@@ -169,3 +169,40 @@ Verification (from SP7 session — pipeline was live):
 
 Known issues:
 - Display colors show blue instead of green (RGB/BGR byte order) — deferred to SP9 display UI
+
+## Subproject 9: Display UI + Menu + Threshold Configuration
+**Status: VERIFIED**
+
+Files created:
+- lib/display_ui/display_ui.h/.cpp (DisplayUI class, 3 screens + Color constants)
+- lib/menu/menu.h/.cpp (Menu class, scrollable 7-item menu)
+
+Files modified:
+- lib/session/session.h/.cpp (ConfigStore: 3 thresholds → 6 values: 3 baselines + 3 tolerances; removed first-shot reference from SessionManager)
+- src/main_primary.cpp (integrated DisplayUI + Menu, new button scheme)
+- claude-memory/DEVELOPMENT_PLAN.md (updated SP6 and SP9 sections)
+
+Implementation details:
+- 3 display screens: HOME (overview), LIVE (real-time angles), SESSION (shot detail + config reference)
+- MENU screen rendered by Menu module with scrolling (4 visible items)
+- 6 configurable values: Cant/Elev/Draw baselines + tolerances
+- Form eval changed from first-shot reference to: |measured - baseline| <= tolerance
+- Button scheme: BtnA tap = cycle screens, BtnA hold = start/stop session, BtnB tap = open menu
+- Menu editing: BtnA = +0.5°, BtnB = -0.5°, auto-exit after 2s idle
+- NVS keys: cant_base, cant_tol, elev_base, elev_tol, draw_base, draw_tol
+- Default baselines: 0°. Default tolerances: 5° / 10° / 15°
+
+Deviations from original plan:
+- Baseline+tolerance replaces simple thresholds (user-requested)
+- Auto-timeout editing replaces hold-to-exit (wasPressed/wasHold conflict on M5Unified)
+- Color issue (blue vs green) still present — likely panel-specific, cosmetic only
+
+Verification:
+- [x] Compiles — SUCCESS (RAM 14.9%, Flash 72.2%)
+- [x] Screen cycling via BtnA tap — HOME/LIVE/SESSION
+- [x] Menu entry via BtnB, scrolling through 7 items
+- [x] Threshold adjustment: A=+0.5, B=-0.5, auto-exit after 2s
+- [x] NVS persistence across reboot — confirmed by user
+- [x] Color coding on SESSION screen (green=OK, red=OVER)
+- [x] Form eval uses baselines+tolerances correctly
+- [x] Session start/stop still works via BtnA hold

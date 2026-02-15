@@ -25,18 +25,31 @@ public:
     void load();
     void save();
 
-    float getCantThreshold() const { return cant_threshold_; }
-    float getElevationThreshold() const { return elevation_threshold_; }
-    float getDrawAngleThreshold() const { return draw_threshold_; }
+    // Baselines — the target angles (degrees)
+    float getCantBaseline() const { return cant_baseline_; }
+    float getElevationBaseline() const { return elevation_baseline_; }
+    float getDrawBaseline() const { return draw_baseline_; }
 
-    void setCantThreshold(float val) { cant_threshold_ = val; }
-    void setElevationThreshold(float val) { elevation_threshold_ = val; }
-    void setDrawAngleThreshold(float val) { draw_threshold_ = val; }
+    void setCantBaseline(float val) { cant_baseline_ = val; }
+    void setElevationBaseline(float val) { elevation_baseline_ = val; }
+    void setDrawBaseline(float val) { draw_baseline_ = val; }
+
+    // Tolerances — how much deviation is OK (degrees)
+    float getCantTolerance() const { return cant_tolerance_; }
+    float getElevationTolerance() const { return elevation_tolerance_; }
+    float getDrawTolerance() const { return draw_tolerance_; }
+
+    void setCantTolerance(float val) { cant_tolerance_ = val; }
+    void setElevationTolerance(float val) { elevation_tolerance_ = val; }
+    void setDrawTolerance(float val) { draw_tolerance_ = val; }
 
 private:
-    float cant_threshold_;
-    float elevation_threshold_;
-    float draw_threshold_;
+    float cant_baseline_;
+    float elevation_baseline_;
+    float draw_baseline_;
+    float cant_tolerance_;
+    float elevation_tolerance_;
+    float draw_tolerance_;
 };
 
 class SessionManager {
@@ -47,7 +60,6 @@ public:
     void stop(uint32_t now_ms);
 
     // Record a shot, evaluate form, build packet, push to buffer
-    // Returns the form evaluation
     FormEvaluation recordShot(const ShotSnapshot& snapshot, float secondary_draw_angle, uint32_t session_start_ms);
 
     SessionState getState() const { return state_; }
@@ -56,7 +68,7 @@ public:
     uint32_t getElapsedMs(uint32_t now_ms) const;
     const ShotPacket_t& getLastPacket() const { return last_packet_; }
 
-    // Evaluate form against thresholds
+    // Evaluate form against baselines + tolerances
     FormEvaluation evaluateForm(const ShotSnapshot& snapshot, float secondary_draw_angle) const;
 
     // Build a shot packet from snapshot data
@@ -70,10 +82,4 @@ private:
     uint8_t shot_count_;
     uint32_t start_time_ms_;
     ShotPacket_t last_packet_;
-
-    // Reference angles (first shot baseline)
-    float ref_cant_;
-    float ref_elevation_;
-    float ref_draw_angle_;
-    bool has_reference_;
 };

@@ -9,21 +9,33 @@ static Preferences prefs;
 
 // ---- ConfigStore ----
 
-static const float DEFAULT_CANT_THRESHOLD = 5.0f;       // degrees
-static const float DEFAULT_ELEVATION_THRESHOLD = 10.0f;  // degrees
-static const float DEFAULT_DRAW_THRESHOLD = 15.0f;       // degrees
+// Default baselines (target angles in degrees)
+static const float DEFAULT_CANT_BASELINE = 0.0f;
+static const float DEFAULT_ELEVATION_BASELINE = 0.0f;
+static const float DEFAULT_DRAW_BASELINE = 0.0f;
+
+// Default tolerances (allowed deviation in degrees)
+static const float DEFAULT_CANT_TOLERANCE = 5.0f;
+static const float DEFAULT_ELEVATION_TOLERANCE = 10.0f;
+static const float DEFAULT_DRAW_TOLERANCE = 15.0f;
 
 ConfigStore::ConfigStore()
-    : cant_threshold_(DEFAULT_CANT_THRESHOLD),
-      elevation_threshold_(DEFAULT_ELEVATION_THRESHOLD),
-      draw_threshold_(DEFAULT_DRAW_THRESHOLD) {}
+    : cant_baseline_(DEFAULT_CANT_BASELINE),
+      elevation_baseline_(DEFAULT_ELEVATION_BASELINE),
+      draw_baseline_(DEFAULT_DRAW_BASELINE),
+      cant_tolerance_(DEFAULT_CANT_TOLERANCE),
+      elevation_tolerance_(DEFAULT_ELEVATION_TOLERANCE),
+      draw_tolerance_(DEFAULT_DRAW_TOLERANCE) {}
 
 void ConfigStore::load() {
 #ifndef NATIVE_TEST
     prefs.begin("archery", true);  // read-only
-    cant_threshold_ = prefs.getFloat("cant_thresh", DEFAULT_CANT_THRESHOLD);
-    elevation_threshold_ = prefs.getFloat("elev_thresh", DEFAULT_ELEVATION_THRESHOLD);
-    draw_threshold_ = prefs.getFloat("draw_thresh", DEFAULT_DRAW_THRESHOLD);
+    cant_baseline_ = prefs.getFloat("cant_base", DEFAULT_CANT_BASELINE);
+    elevation_baseline_ = prefs.getFloat("elev_base", DEFAULT_ELEVATION_BASELINE);
+    draw_baseline_ = prefs.getFloat("draw_base", DEFAULT_DRAW_BASELINE);
+    cant_tolerance_ = prefs.getFloat("cant_tol", DEFAULT_CANT_TOLERANCE);
+    elevation_tolerance_ = prefs.getFloat("elev_tol", DEFAULT_ELEVATION_TOLERANCE);
+    draw_tolerance_ = prefs.getFloat("draw_tol", DEFAULT_DRAW_TOLERANCE);
     prefs.end();
 #endif
 }
@@ -31,9 +43,12 @@ void ConfigStore::load() {
 void ConfigStore::save() {
 #ifndef NATIVE_TEST
     prefs.begin("archery", false);  // read-write
-    prefs.putFloat("cant_thresh", cant_threshold_);
-    prefs.putFloat("elev_thresh", elevation_threshold_);
-    prefs.putFloat("draw_thresh", draw_threshold_);
+    prefs.putFloat("cant_base", cant_baseline_);
+    prefs.putFloat("elev_base", elevation_baseline_);
+    prefs.putFloat("draw_base", draw_baseline_);
+    prefs.putFloat("cant_tol", cant_tolerance_);
+    prefs.putFloat("elev_tol", elevation_tolerance_);
+    prefs.putFloat("draw_tol", draw_tolerance_);
     prefs.end();
 #endif
 }
@@ -42,14 +57,12 @@ void ConfigStore::save() {
 
 SessionManager::SessionManager(ShotBuffer<64>* buffer, ConfigStore* config)
     : buffer_(buffer), config_(config), state_(SessionState::IDLE),
-      shot_count_(0), start_time_ms_(0), last_packet_{},
-      ref_cant_(0), ref_elevation_(0), ref_draw_angle_(0), has_reference_(false) {}
+      shot_count_(0), start_time_ms_(0), last_packet_{} {}
 
 void SessionManager::start(uint32_t now_ms) {
     state_ = SessionState::ACTIVE;
     shot_count_ = 0;
     start_time_ms_ = now_ms;
-    has_reference_ = false;
     buffer_->clear();
 }
 
@@ -65,20 +78,14 @@ uint32_t SessionManager::getElapsedMs(uint32_t now_ms) const {
 FormEvaluation SessionManager::evaluateForm(const ShotSnapshot& snapshot, float secondary_draw_angle) const {
     FormEvaluation eval;
 
-    float cant = fabsf(snapshot.roll);
-    float elevation = fabsf(snapshot.pitch);
-    float draw = fabsf(secondary_draw_angle);
+    // Compare measured angles against configurable baselines
+    float cant_dev = fabsf(snapshot.roll - config_->getCantBaseline());
+    float elev_dev = fabsf(snapshot.pitch - config_->getElevationBaseline());
+    float draw_dev = fabsf(secondary_draw_angle - config_->getDrawBaseline());
 
-    // If we have a reference, evaluate relative to it
-    if (has_reference_) {
-        cant = fabsf(snapshot.roll - ref_cant_);
-        elevation = fabsf(snapshot.pitch - ref_elevation_);
-        draw = fabsf(secondary_draw_angle - ref_draw_angle_);
-    }
-
-    eval.cant_ok = (cant <= config_->getCantThreshold());
-    eval.elevation_ok = (elevation <= config_->getElevationThreshold());
-    eval.draw_ok = (draw <= config_->getDrawAngleThreshold());
+    eval.cant_ok = (cant_dev <= config_->getCantTolerance());
+    eval.elevation_ok = (elev_dev <= config_->getElevationTolerance());
+    eval.draw_ok = (draw_dev <= config_->getDrawTolerance());
 
     eval.flags = 0;
     if (eval.cant_ok) eval.flags |= FORM_FLAG_CANT_OK;
@@ -95,10 +102,10 @@ ShotPacket_t SessionManager::buildPacket(const ShotSnapshot& snapshot, float sec
     pkt.cant_angle = imu_math::degreesToCentidegrees(snapshot.roll);
     pkt.elevation_angle = imu_math::degreesToCentidegrees(snapshot.pitch);
     pkt.draw_angle = imu_math::degreesToCentidegrees(secondary_draw_angle);
-    pkt.draw_velocity = (int16_t)(snapshot.peak_angular_vel * 10.0f);  // 0.1 deg/s units
+    pkt.draw_velocity = (int16_t)(snapshot.peak_angular_vel * 10.0f);
     pkt.shot_number = shot_num;
     pkt.form_flags = form_flags;
-    pkt.heading = 0xFFFF;  // No magnetometer
+    pkt.heading = 0xFFFF;
     pkt.reserved = 0;
     return pkt;
 }
@@ -109,14 +116,6 @@ FormEvaluation SessionManager::recordShot(const ShotSnapshot& snapshot, float se
     }
 
     shot_count_++;
-
-    // First shot becomes the reference baseline
-    if (!has_reference_) {
-        ref_cant_ = snapshot.roll;
-        ref_elevation_ = snapshot.pitch;
-        ref_draw_angle_ = secondary_draw_angle;
-        has_reference_ = true;
-    }
 
     FormEvaluation eval = evaluateForm(snapshot, secondary_draw_angle);
     last_packet_ = buildPacket(snapshot, secondary_draw_angle, shot_count_, eval.flags);

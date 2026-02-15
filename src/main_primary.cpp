@@ -8,6 +8,8 @@
 #include <shot_buffer.h>
 #include <session.h>
 #include <espnow_comm.h>
+#include <display_ui.h>
+#include <menu.h>
 
 static HalM5Unified hal;
 static ComplementaryFilter filter(0.98f);
@@ -16,26 +18,23 @@ static FeedbackEngine* feedback = nullptr;
 static ShotBuffer<64> shotBuffer;
 static ConfigStore configStore;
 static SessionManager* session = nullptr;
+static DisplayUI* displayUI = nullptr;
+static Menu* menu = nullptr;
 
 static uint32_t lastDisplayTime = 0;
 static uint32_t lastLoopTime = 0;
 static bool splashDone = false;
 
-// Last shot display data
-static bool hasLastShot = false;
-static float lastShotCant = 0;
-static float lastShotElev = 0;
-static float lastShotDraw = 0;
-static bool lastShotCantOk = false;
-static bool lastShotElevOk = false;
-static bool lastShotDrawOk = false;
-static uint8_t lastShotNum = 0;
+// Display data shared between main loop and display module
+static DisplayData dispData = {};
 
 void setup() {
     Serial.begin(115200);
     hal.init();
     feedback = new FeedbackEngine(&hal);
     session = new SessionManager(&shotBuffer, &configStore);
+    displayUI = new DisplayUI(&hal);
+    menu = new Menu(&hal, &configStore);
 
     configStore.load();
 
@@ -49,30 +48,30 @@ void setup() {
     hal.displayClear();
     hal.displaySetTextSize(2);
     hal.displaySetCursor(10, 10);
-    hal.displaySetTextColor(0x07E0);  // Green
+    hal.displaySetTextColor(0x07E0);
     hal.displayPrint("Archery");
     hal.displaySetCursor(10, 35);
     hal.displayPrint("Wearable");
     hal.displaySetTextSize(1);
     hal.displaySetCursor(10, 60);
     hal.displaySetTextColor(0xFFFF);
-    hal.displayPrint("PRIMARY - MVP");
+    hal.displayPrint("PRIMARY v0.9");
 
     Serial.println("=== Archery Wearable - PRIMARY ===");
-    Serial.println("SP8: Integrated Shot Pipeline (MVP)");
-    Serial.println("BtnA hold = start/stop session");
-    Serial.printf("Thresholds: Cant=%.1f Elev=%.1f Draw=%.1f\n",
-        configStore.getCantThreshold(),
-        configStore.getElevationThreshold(),
-        configStore.getDrawAngleThreshold());
+    Serial.println("SP9: Display UI + Menu System");
+    Serial.println("BtnA tap=cycle screen, hold=session");
+    Serial.println("BtnB tap=menu");
+    Serial.printf("Baselines: Cant=%.1f Elev=%.1f Draw=%.1f\n",
+        configStore.getCantBaseline(),
+        configStore.getElevationBaseline(),
+        configStore.getDrawBaseline());
+    Serial.printf("Tolerances: Cant=%.1f Elev=%.1f Draw=%.1f\n",
+        configStore.getCantTolerance(),
+        configStore.getElevationTolerance(),
+        configStore.getDrawTolerance());
     Serial.println("===================================");
 
     lastLoopTime = hal.millis();
-}
-
-// Redraw the full live UI (called after splash clears)
-static void drawFullUI() {
-    hal.displayClear();
 }
 
 void loop() {
@@ -87,7 +86,7 @@ void loop() {
     // Clear boot splash after 2 seconds
     if (!splashDone && now > 2000) {
         splashDone = true;
-        drawFullUI();
+        hal.displayClear();
     }
 
     // Primary IMU
@@ -114,15 +113,15 @@ void loop() {
         if (session->getState() == SessionState::ACTIVE) {
             FormEvaluation eval = session->recordShot(snap, drawAngle, session->getStartTime());
 
-            // Update last shot display data
-            hasLastShot = true;
-            lastShotNum = session->getShotCount();
-            lastShotCant = snap.roll;
-            lastShotElev = snap.pitch;
-            lastShotDraw = drawAngle;
-            lastShotCantOk = eval.cant_ok;
-            lastShotElevOk = eval.elevation_ok;
-            lastShotDrawOk = eval.draw_ok;
+            // Update display data for last shot
+            dispData.has_last_shot = true;
+            dispData.last_shot_num = session->getShotCount();
+            dispData.last_cant = snap.roll;
+            dispData.last_elev = snap.pitch;
+            dispData.last_draw = drawAngle;
+            dispData.last_cant_ok = eval.cant_ok;
+            dispData.last_elev_ok = eval.elevation_ok;
+            dispData.last_draw_ok = eval.draw_ok;
 
             Serial.printf(">>> SHOT #%d | P:%.1f R:%.1f Draw:%.1f Vel:%.1f | Cant:%s Elev:%s Draw:%s\n",
                 session->getShotCount(), snap.pitch, snap.roll, drawAngle, snap.peak_angular_vel,
@@ -138,7 +137,6 @@ void loop() {
             } else if (!eval.draw_ok) {
                 feedback->play(PatternID::DRAW_INCONSISTENT);
             } else {
-                // Elevation only exceeded
                 feedback->play(PatternID::SHOT_DETECTED);
             }
 
@@ -151,38 +149,84 @@ void loop() {
         }
     }
 
-    // Button A hold = start/stop session
-    if (hal.getButtonAHeld()) {
-        if (session->getState() == SessionState::ACTIVE) {
-            session->stop(now);
-            feedback->play(PatternID::SESSION_END);
-            Serial.printf("Session STOPPED | Shots: %d | Duration: %lums | Buffer: %d\n",
-                session->getShotCount(), session->getElapsedMs(now), shotBuffer.getCount());
-        } else {
-            session->start(now);
-            hasLastShot = false;
-            feedback->play(PatternID::SESSION_START);
-            Serial.println("Session STARTED");
+    // ── Button handling ──
+
+    if (menu->isActive()) {
+        // Menu mode: buttons go to menu
+        if (hal.getButtonA()) menu->onButtonA();
+        if (hal.getButtonB()) menu->onButtonB();
+        menu->update(now);
+
+        // Menu exited? Switch display back to HOME
+        if (!menu->isActive()) {
+            displayUI->setScreen(ScreenID::HOME);
+            hal.displayClear();
+            Serial.printf("Menu closed. Base: C=%.1f E=%.1f D=%.1f | Tol: C=%.1f E=%.1f D=%.1f\n",
+                configStore.getCantBaseline(), configStore.getElevationBaseline(),
+                configStore.getDrawBaseline(), configStore.getCantTolerance(),
+                configStore.getElevationTolerance(), configStore.getDrawTolerance());
+        }
+    } else {
+        // Normal mode
+        if (hal.getButtonA()) {
+            displayUI->nextScreen();
+            Serial.printf("Screen: %d\n", (int)displayUI->getScreen());
+        }
+
+        if (hal.getButtonAHeld()) {
+            if (session->getState() == SessionState::ACTIVE) {
+                session->stop(now);
+                feedback->play(PatternID::SESSION_END);
+                Serial.printf("Session STOPPED | Shots: %d | Duration: %lums | Buffer: %d\n",
+                    session->getShotCount(), session->getElapsedMs(now), shotBuffer.getCount());
+            } else {
+                session->start(now);
+                dispData.has_last_shot = false;
+                feedback->play(PatternID::SESSION_START);
+                Serial.println("Session STARTED");
+            }
+        }
+
+        if (hal.getButtonB()) {
+            menu->enter();
+            displayUI->setScreen(ScreenID::MENU);
+            Serial.println("Menu opened");
         }
     }
 
-    // Button B = print debug info
-    if (hal.getButtonB()) {
-        Serial.printf("Thresholds: Cant=%.1f Elev=%.1f Draw=%.1f | Buffer: %d/%d shots\n",
-            configStore.getCantThreshold(),
-            configStore.getElevationThreshold(),
-            configStore.getDrawAngleThreshold(),
-            shotBuffer.getCount(), shotBuffer.capacity());
-        Serial.printf("ESP-NOW: RX=%lu %s\n",
-            espnow_comm::getPacketCount(),
-            secConnected ? "CONNECTED" : "DISCONNECTED");
-    }
+    // ── Display + serial at 10Hz ──
 
-    // Display + serial at 10Hz (only after splash clears)
     if (splashDone && (now - lastDisplayTime >= 100)) {
         lastDisplayTime = now;
 
-        // === Serial output ===
+        // Fill display data struct
+        dispData.pitch = pitch;
+        dispData.roll = roll;
+        dispData.sec_connected = secConnected;
+        dispData.sec_pitch = secData.pitch;
+        dispData.sec_roll = secData.roll;
+        dispData.sec_battery = secData.battery;
+        dispData.session_state = session->getState();
+        dispData.shot_count = session->getShotCount();
+        dispData.elapsed_ms = session->getElapsedMs(now);
+        dispData.battery = hal.getBatteryLevel();
+        dispData.buffer_count = shotBuffer.getCount();
+        dispData.buffer_capacity = shotBuffer.capacity();
+        dispData.base_cant = configStore.getCantBaseline();
+        dispData.base_elev = configStore.getElevationBaseline();
+        dispData.base_draw = configStore.getDrawBaseline();
+        dispData.tol_cant = configStore.getCantTolerance();
+        dispData.tol_elev = configStore.getElevationTolerance();
+        dispData.tol_draw = configStore.getDrawTolerance();
+
+        // Draw screen (menu draws itself)
+        if (menu->isActive()) {
+            // Menu redraws on button press, not every frame
+        } else {
+            displayUI->draw(dispData);
+        }
+
+        // Serial output
         Serial.printf("P:%.1f R:%.1f | Sec:%s",
             pitch, roll,
             secConnected ? "OK" : "---");
@@ -190,94 +234,11 @@ void loop() {
             Serial.printf(" P:%.1f R:%.1f B:%d%%",
                 secData.pitch, secData.roll, secData.battery);
         }
-        Serial.printf(" | St:%d Sess:%d #%d Buf:%d\n",
-            (int)shotDetector.getState(),
+        Serial.printf(" | Scr:%d Sess:%d #%d Buf:%d\n",
+            (int)displayUI->getScreen(),
             (int)session->getState(),
             session->getShotCount(),
             shotBuffer.getCount());
-
-        // === Display layout (135x240 portrait) ===
-        // Row 0-9: Secondary status bar
-        hal.displayFillRect(0, 0, hal.getDisplayWidth(), 10, 0);
-        hal.displaySetTextSize(1);
-        hal.displaySetCursor(2, 1);
-        if (secConnected) {
-            hal.displaySetTextColor(0x07E0);  // Green
-            hal.displayPrintf("Sec P:%.0f R:%.0f B:%d%%",
-                secData.pitch, secData.roll, secData.battery);
-        } else {
-            hal.displaySetTextColor(0xF800);  // Red
-            hal.displayPrintf("Sec: DISCONNECTED");
-        }
-
-        // Row 14-30: Primary pitch
-        hal.displayFillRect(0, 14, hal.getDisplayWidth(), 20, 0);
-        hal.displaySetTextSize(2);
-        hal.displaySetCursor(2, 16);
-        hal.displaySetTextColor(0x07FF);  // Cyan
-        hal.displayPrintf("P:%6.1f", pitch);
-
-        // Row 36-52: Primary roll
-        hal.displayFillRect(0, 36, hal.getDisplayWidth(), 20, 0);
-        hal.displaySetTextSize(2);
-        hal.displaySetCursor(2, 38);
-        hal.displaySetTextColor(0xFFE0);  // Yellow
-        hal.displayPrintf("R:%6.1f", roll);
-
-        // Row 60-100: Last shot info
-        hal.displayFillRect(0, 58, hal.getDisplayWidth(), 44, 0);
-        hal.displaySetTextSize(1);
-        if (hasLastShot) {
-            // Shot header
-            hal.displaySetCursor(2, 60);
-            hal.displaySetTextColor(0xFFFF);
-            hal.displayPrintf("Shot #%d:", lastShotNum);
-
-            // Cant + Elevation
-            hal.displaySetCursor(2, 72);
-            hal.displaySetTextColor(lastShotCantOk ? 0x07E0 : 0xF800);
-            hal.displayPrintf("C:%5.1f", lastShotCant);
-            hal.displaySetCursor(68, 72);
-            hal.displaySetTextColor(lastShotElevOk ? 0x07E0 : 0xF800);
-            hal.displayPrintf("E:%5.1f", lastShotElev);
-
-            // Draw angle
-            hal.displaySetCursor(2, 84);
-            hal.displaySetTextColor(lastShotDrawOk ? 0x07E0 : 0xF800);
-            hal.displayPrintf("D:%5.1f", lastShotDraw);
-
-            // Form flags summary
-            hal.displaySetCursor(68, 84);
-            hal.displaySetTextColor(0xFFFF);
-            hal.displayPrintf(
-                (lastShotCantOk && lastShotElevOk && lastShotDrawOk) ? "GOOD" : "WARN");
-        } else {
-            hal.displaySetCursor(2, 72);
-            hal.displaySetTextColor(0x7BEF);  // Gray
-            hal.displayPrintf("No shots yet");
-        }
-
-        // Row 106-122: Session status
-        hal.displayFillRect(0, 106, hal.getDisplayWidth(), 20, 0);
-        hal.displaySetTextSize(2);
-        hal.displaySetCursor(2, 108);
-        if (session->getState() == SessionState::ACTIVE) {
-            hal.displaySetTextColor(0x07E0);  // Green
-            uint32_t elapsed = session->getElapsedMs(now) / 1000;
-            hal.displayPrintf("#%d %lus", session->getShotCount(), elapsed);
-        } else {
-            hal.displaySetTextColor(0xFFFF);
-            hal.displayPrintf("IDLE");
-        }
-
-        // Row 128-135: Bottom bar (buffer + battery)
-        hal.displayFillRect(0, 128, hal.getDisplayWidth(), 8, 0);
-        hal.displaySetTextSize(1);
-        hal.displaySetCursor(2, 128);
-        hal.displaySetTextColor(0x7BEF);  // Gray
-        hal.displayPrintf("Buf:%d/%d Bat:%d%%",
-            shotBuffer.getCount(), shotBuffer.capacity(),
-            hal.getBatteryLevel());
     }
 }
 

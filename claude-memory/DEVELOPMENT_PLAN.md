@@ -344,15 +344,19 @@ Session state machine (idle/active/ended) and persistent threshold storage via E
 
 **6.2** Implement `ConfigStore` (in session module):
 - Uses ESP32 `Preferences` library (NVS wrapper)
-- Stores: `cant_threshold` (float), `elevation_threshold` (float), `draw_angle_threshold` (float)
+- Stores 6 values: 3 baselines (target angles) + 3 tolerances (allowed deviation)
+  - `cant_baseline`, `cant_tolerance`
+  - `elevation_baseline`, `elevation_tolerance`
+  - `draw_baseline`, `draw_tolerance`
 - `load()` — reads from NVS, applies defaults if first boot
 - `save()` — writes current values to NVS
-- `getThreshold(type)` / `setThreshold(type, value)`
+- Defaults: baselines = 0.0°, tolerances = 5.0° / 10.0° / 15.0°
 
 **6.3** Form evaluation:
 - `evaluateForm(ShotSnapshot)` → returns `form_flags` bitfield
-- Compares cant, elevation, draw angle against thresholds
+- Compares `|measured_angle - baseline| <= tolerance` for each axis
 - Returns which aspects are ok/exceeded
+- **No first-shot reference** — uses explicit baselines from ConfigStore
 
 **6.4** Integrate into `main_primary.cpp`:
 - Button A long press: start/stop session
@@ -527,10 +531,14 @@ Multi-screen display UI with a menu system for threshold configuration.
 - In menu: Button A = next item, Button B = select/adjust
 
 **9.3** Implement menu system:
-- Menu items: Cant threshold (±0.5°), Elevation threshold (±0.5°), Draw angle threshold (±0.5°)
-- Adjust with button presses (A = increment, long A = decrement)
-- B = save and exit submenu
-- Changes saved to NVS via ConfigStore
+- Menu items (6 configurable values + Save & Exit):
+  - Cant Baseline / Cant Tolerance
+  - Elev Baseline / Elev Tolerance
+  - Draw Baseline / Draw Tolerance
+- Adjust with button presses (A = +0.5°, B = -0.5°)
+- Auto-exit editing after 2 seconds of no input
+- Scrollable list (4 visible items at a time)
+- Changes saved to NVS via ConfigStore on exit
 
 **9.4** Display rendering:
 - Use M5.Display (TFT_eSPI) methods
