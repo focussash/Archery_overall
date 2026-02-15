@@ -34,22 +34,35 @@ struct ESPNowIMUData {
     bool valid;                 // True after first successful receive
 };
 
+// Shot notification received from Primary (used by Secondary)
+struct ESPNowShotNotify {
+    uint8_t shot_number;
+    uint32_t received_at_ms;
+    bool pending;           // True until consumed by getShotNotify()
+};
+
 namespace espnow_comm {
 
-// Initialize as Primary (receiver) on given WiFi channel
+// Initialize as Primary (receiver + can send shot notifies) on given WiFi channel
 bool initPrimary(uint8_t channel = 1);
 
-// Initialize as Secondary (sender) on given WiFi channel
+// Initialize as Secondary (sender + can receive shot notifies) on given WiFi channel
 bool initSecondary(uint8_t channel = 1);
 
 // Secondary: send current IMU data via broadcast
 bool sendIMUData(float pitch, float roll, uint8_t battery);
+
+// Primary: send shot notification to Secondary
+bool sendShotNotify(uint8_t shot_number);
 
 // Primary: get latest received data (lock-free copy)
 ESPNowIMUData getLatestData();
 
 // Primary: is Secondary connected (received packet within timeout)?
 bool isSecondaryConnected();
+
+// Secondary: get shot notification (returns and clears pending flag)
+ESPNowShotNotify getShotNotify();
 
 // Get total packets sent (Secondary) or received (Primary)
 uint32_t getPacketCount();

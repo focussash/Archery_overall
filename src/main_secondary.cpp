@@ -15,15 +15,20 @@ static uint32_t lastLoopTime = 0;
 static const uint32_t SEND_INTERVAL_MS = 20;    // 50Hz ESP-NOW send rate
 static const uint32_t DISPLAY_INTERVAL_MS = 200; // 5Hz display/serial update
 
+// Shot echo display
+static bool shotEchoActive = false;
+static uint32_t shotEchoTime = 0;
+static uint8_t shotEchoNum = 0;
+static const uint32_t SHOT_ECHO_DURATION_MS = 1000;
+
 void setup() {
     Serial.begin(115200);
     hal.init();
 
-    // Initialize ESP-NOW as Secondary (sender)
     if (!espnow_comm::initSecondary(1)) {
         Serial.println("ESP-NOW init FAILED!");
     } else {
-        Serial.println("ESP-NOW init OK (broadcast mode)");
+        Serial.println("ESP-NOW init OK (broadcast + listen)");
     }
 
     hal.displayClear();
@@ -36,10 +41,10 @@ void setup() {
     hal.displaySetTextSize(1);
     hal.displaySetCursor(10, 60);
     hal.displaySetTextColor(0xFFFF);
-    hal.displayPrint("SECONDARY - SP7");
+    hal.displayPrint("SECONDARY - MVP");
 
     Serial.println("=== Archery Wearable - SECONDARY ===");
-    Serial.println("SP7: ESP-NOW IMU Streaming (50Hz)");
+    Serial.println("SP8: IMU Streaming + Shot Echo");
     Serial.println("=====================================");
 
     lastLoopTime = hal.millis();
@@ -71,6 +76,20 @@ void loop() {
         espnow_comm::sendIMUData(pitch, roll, battery);
     }
 
+    // Check for shot notification from Primary
+    ESPNowShotNotify notify = espnow_comm::getShotNotify();
+    if (notify.pending) {
+        shotEchoActive = true;
+        shotEchoTime = now;
+        shotEchoNum = notify.shot_number;
+        Serial.printf("<<< Shot #%d echo from Primary\n", notify.shot_number);
+    }
+
+    // Clear shot echo after duration
+    if (shotEchoActive && (now - shotEchoTime > SHOT_ECHO_DURATION_MS)) {
+        shotEchoActive = false;
+    }
+
     // Display + serial at 5Hz
     if (now - lastDisplayTime >= DISPLAY_INTERVAL_MS) {
         lastDisplayTime = now;
@@ -92,11 +111,16 @@ void loop() {
         hal.displaySetTextColor(0xFFE0);  // Yellow
         hal.displayPrintf("R:%5.1f", roll);
 
-        // Status bar
+        // Status bar or shot echo
         hal.displaySetTextSize(1);
         hal.displaySetCursor(5, 122);
-        hal.displaySetTextColor(0x07E0);  // Green
-        hal.displayPrintf("TX:%lu Batt:%d%%", txCount, battery);
+        if (shotEchoActive) {
+            hal.displaySetTextColor(0x07E0);  // Green
+            hal.displayPrintf("Shot #%d!", shotEchoNum);
+        } else {
+            hal.displaySetTextColor(0x07E0);  // Green
+            hal.displayPrintf("TX:%lu Batt:%d%%", txCount, battery);
+        }
     }
 }
 

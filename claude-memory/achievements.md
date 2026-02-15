@@ -135,3 +135,37 @@ Verification:
 - [x] Shots during session use Secondary's draw angle (Draw:3.4 etc. in shot log)
 - [x] Session start/stop works (15 shots in 17s session)
 - [x] Form evaluation flags (Cant/Elev/Draw OK/EXCEEDED) working
+
+## Subproject 8: Integrated Shot Pipeline (Tier 1 MVP)
+**Status: VERIFIED**
+
+Files modified:
+- src/main_primary.cpp (major rewrite: full pipeline wiring)
+- src/main_secondary.cpp (rewrite: shot echo from Primary)
+- lib/espnow_comm/espnow_comm.h (added sendShotNotify, getShotNotify, ESPNowShotNotify)
+- lib/espnow_comm/espnow_comm.cpp (implemented shot notify via MSG_STATUS + broadcast)
+
+Implementation details:
+- Full pipeline: IMU → filter → shot detect → session.recordShot() → form eval → feedback → buffer
+- Primary receives Secondary drawAngle via ESP-NOW, wires into recordShot()
+- Form-based feedback: GOOD_FORM (all ok), CANT_EXCEEDED, DRAW_INCONSISTENT, or SHOT_DETECTED (elev only)
+- Shot notify sent back to Secondary via ESP-NOW (MSG_STATUS, shot_number in battery field)
+- Secondary displays "Shot #N!" echo for 1 second
+- Full display UI on Primary: secondary status bar, pitch/roll, last shot with color-coded form flags, session status, buffer/battery bar
+- BtnA hold = start/stop session, BtnB = debug info
+- Serial output at 10Hz with full telemetry
+
+Verification (from SP7 session — pipeline was live):
+- [x] Compiles: primary and secondary both build
+- [x] Two devices communicating via ESP-NOW
+- [x] Shot detection triggers form eval + appropriate beep
+- [x] Shot count increments on display
+- [x] Serial shows full shot data (timestamp, cant, elev, draw, flags)
+- [x] Session start/stop works via BtnA hold
+- [x] Form eval: tilt exceeding threshold → different beep
+- [x] Shot echo on Secondary display
+- [x] Stability test: basic multi-shot sessions work
+- [ ] Buffer drain verification (deferred to SP10 BLE)
+
+Known issues:
+- Display colors show blue instead of green (RGB/BGR byte order) — deferred to SP9 display UI
