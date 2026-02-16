@@ -10,6 +10,7 @@
 #include <espnow_comm.h>
 #include <display_ui.h>
 #include <menu.h>
+#include <ble_relay.h>
 
 static HalM5Unified hal;
 static ComplementaryFilter filter(0.98f);
@@ -22,6 +23,7 @@ static DisplayUI* displayUI = nullptr;
 static Menu* menu = nullptr;
 
 static uint32_t lastDisplayTime = 0;
+static uint32_t lastStatusTime = 0;
 static uint32_t lastLoopTime = 0;
 static bool splashDone = false;
 
@@ -44,6 +46,11 @@ void setup() {
         Serial.println("ESP-NOW init OK (listening + broadcast)");
     }
 
+    if (!ble_relay::init("ArcheryWearable")) {
+        Serial.println("BLE init FAILED!");
+    }
+    ble_relay::updateConfig(&configStore);
+
     // Boot splash
     hal.displayClear();
     hal.displaySetTextSize(2);
@@ -55,10 +62,10 @@ void setup() {
     hal.displaySetTextSize(1);
     hal.displaySetCursor(10, 60);
     hal.displaySetTextColor(0xFFFF);
-    hal.displayPrint("PRIMARY v0.9");
+    hal.displayPrint("PRIMARY v1.0");
 
     Serial.println("=== Archery Wearable - PRIMARY ===");
-    Serial.println("SP9: Display UI + Menu System");
+    Serial.println("SP10: BLE GATT Relay");
     Serial.println("BtnA tap=cycle screen, hold=session");
     Serial.println("BtnB tap=menu");
     Serial.printf("Baselines: Cant=%.1f Elev=%.1f Draw=%.1f\n",
@@ -142,6 +149,11 @@ void loop() {
 
             // Notify Secondary about the shot
             espnow_comm::sendShotNotify(session->getShotCount());
+
+            // Send via BLE if connected (otherwise stays in buffer for drain on connect)
+            if (ble_relay::isConnected()) {
+                ble_relay::sendShot(&session->getLastPacket());
+            }
         } else {
             Serial.printf(">>> SHOT (no session) P:%.1f R:%.1f Accel:%.2fg Draw:%.1f\n",
                 snap.pitch, snap.roll, snap.accel_magnitude, drawAngle);
@@ -161,6 +173,7 @@ void loop() {
         if (!menu->isActive()) {
             displayUI->setScreen(ScreenID::HOME);
             hal.displayClear();
+            ble_relay::updateConfig(&configStore);
             Serial.printf("Menu closed. Base: C=%.1f E=%.1f D=%.1f | Tol: C=%.1f E=%.1f D=%.1f\n",
                 configStore.getCantBaseline(), configStore.getElevationBaseline(),
                 configStore.getDrawBaseline(), configStore.getCantTolerance(),
@@ -192,6 +205,42 @@ void loop() {
             displayUI->setScreen(ScreenID::MENU);
             Serial.println("Menu opened");
         }
+    }
+
+    // ── BLE ──
+
+    ble_relay::update(&shotBuffer);
+
+    // Handle BLE commands from phone
+    BleCommand bleCmd = ble_relay::getCommand();
+    if (bleCmd.session_start && session->getState() != SessionState::ACTIVE) {
+        session->start(now);
+        dispData.has_last_shot = false;
+        feedback->play(PatternID::SESSION_START);
+        Serial.println("Session STARTED (BLE command)");
+    }
+    if (bleCmd.session_stop && session->getState() == SessionState::ACTIVE) {
+        session->stop(now);
+        feedback->play(PatternID::SESSION_END);
+        Serial.printf("Session STOPPED (BLE) | Shots: %d | Duration: %lums\n",
+            session->getShotCount(), session->getElapsedMs(now));
+    }
+    if (bleCmd.config_updated) {
+        ble_relay::applyReceivedConfig(&configStore);
+        ble_relay::updateConfig(&configStore);
+        Serial.println("Config updated from BLE");
+    }
+
+    // Update BLE device status every 2 seconds
+    if (now - lastStatusTime >= 2000) {
+        lastStatusTime = now;
+        BleDeviceStatus status;
+        status.battery = (uint8_t)hal.getBatteryLevel();
+        status.imu_ok = 1;
+        status.sec_connected = secConnected ? 1 : 0;
+        status.session_state = (uint8_t)session->getState();
+        status.shot_count = session->getShotCount();
+        ble_relay::updateStatus(status);
     }
 
     // ── Display + serial at 10Hz ──
@@ -234,11 +283,12 @@ void loop() {
             Serial.printf(" P:%.1f R:%.1f B:%d%%",
                 secData.pitch, secData.roll, secData.battery);
         }
-        Serial.printf(" | Scr:%d Sess:%d #%d Buf:%d\n",
+        Serial.printf(" | Scr:%d Sess:%d #%d Buf:%d BLE:%s\n",
             (int)displayUI->getScreen(),
             (int)session->getState(),
             session->getShotCount(),
-            shotBuffer.getCount());
+            shotBuffer.getCount(),
+            ble_relay::isInitialized() ? (ble_relay::isConnected() ? "CONN" : "ADV") : "FAIL");
     }
 }
 

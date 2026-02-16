@@ -599,8 +599,9 @@ lib_deps =
 - Phone writes 0x01 to Session Control → start session (same as button)
 - Phone writes 0x02 → stop session
 
-**10.7** Handle threshold sync:
-- Phone writes 12 bytes (3 floats) → update thresholds + save to NVS
+**10.7** Handle config sync:
+- Phone writes 24 bytes (6 floats: 3 baselines + 3 tolerances) → update ConfigStore + save to NVS
+- Phone can read current config from the same characteristic
 
 **10.8** Integrate into main loop:
 - After shot is buffered → `bleRelay.sendShot()` if connected

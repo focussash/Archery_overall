@@ -206,3 +206,45 @@ Verification:
 - [x] Color coding on SESSION screen (green=OK, red=OVER)
 - [x] Form eval uses baselines+tolerances correctly
 - [x] Session start/stop still works via BtnA hold
+
+## Subproject 10: BLE GATT Relay
+**Status: VERIFIED**
+
+Files created:
+- lib/ble_relay/ble_relay.h (GATT service UUIDs, BleDeviceStatus, BleConfigPacket, BleCommand structs)
+- lib/ble_relay/ble_relay.cpp (NimBLE GATT server with 4 characteristics)
+
+Files modified:
+- platformio.ini (added NimBLE-Arduino dep, huge_app.csv partition, NimBLE role flags)
+- src/main_primary.cpp (integrated BLE init, shot sending, buffer drain, status updates, phone commands)
+
+Implementation details:
+- NimBLE GATT server with custom UUID base: 4152Cxxx-0001-1000-8000-00805F9B34FB
+- 4 characteristics: Shot Data (notify), Session Control (write), Device Status (read+notify), Config (read+write)
+- Buffer drain triggered on client subscribe to shot notifications (not on connect)
+- BLE device status updated every 2 seconds (battery, IMU, secondary connection, session state, shot count)
+- Phone can start/stop session and push config changes via BLE writes
+- Config sync: phone writes 24 bytes (6 floats) → ConfigStore updated + NVS saved
+
+Flash optimization applied:
+- Switched partition from default.csv (1,280KB app + 1,280KB OTA) to huge_app.csv (3,072KB app, no OTA)
+- Disabled unused NimBLE roles: CONFIG_BT_NIMBLE_ROLE_CENTRAL=0, CONFIG_BT_NIMBLE_ROLE_OBSERVER=0
+- Result: flash usage dropped from 91.5% to 37.8%
+
+Fixes applied during verification:
+- BLE advertising packet was too large (38 bytes > 31 byte limit) — split name into adv data, service UUID into scan response
+- Buffer drain was firing on connect (before client subscribed to notifications) — changed to trigger on subscribe via onSubscribe callback
+- Added BLE init error checking and status indicator in serial output
+
+Build results:
+- [x] `pio run -e primary` — SUCCESS (RAM 17.9%, Flash 37.8%)
+- [x] `pio run -e secondary` — SUCCESS (unchanged, no BLE dependency)
+
+Verification:
+- [x] Device appears as "ArcheryWearable" in BLE scan (nRF Connect app)
+- [x] Connect → see service and 4 characteristics
+- [x] Simulate shots → see 20-byte notifications
+- [x] Write 0x01 to Session Control → session starts on device (rising tone)
+- [x] Write 0x02 to Session Control → session stops (falling tone)
+- [x] Disconnect → reconnect → subscribe → buffered shots drain
+- [x] ESP-NOW still works while BLE is connected (Secondary visible on Primary + shot notifications to phone simultaneously)
