@@ -5,13 +5,16 @@ ShotDetector::ShotDetector()
     : state_(ShotState::IDLE)
     , shot_fired_flag_(false)
     , last_shot_{}
+    , last_timing_{}
     , state_enter_time_(0)
+    , draw_start_time_(0)
+    , hold_start_time_(0)
     , peak_angular_vel_(0.0f)
     , peak_accel_mag_(0.0f)
     , hold_pitch_(0.0f)
     , hold_roll_(0.0f)
 {
-    config_.accel_threshold = 2.5f;      // 2.5g spike for shot
+    config_.accel_threshold = 6.0f;       // 6g spike for shot (bow release shock is 10-20g+)
     config_.draw_pitch_rate = 15.0f;     // deg/s pitch change for draw
     config_.hold_stability = 10.0f;      // deg/s max for "holding still"
     config_.debounce_ms = 500;
@@ -28,8 +31,29 @@ void ShotDetector::reset() {
     state_ = ShotState::IDLE;
     shot_fired_flag_ = false;
     state_enter_time_ = 0;
+    draw_start_time_ = 0;
+    hold_start_time_ = 0;
     peak_angular_vel_ = 0.0f;
     peak_accel_mag_ = 0.0f;
+}
+
+void ShotDetector::recordTiming(uint32_t shot_time_ms) {
+    if (draw_start_time_ > 0) {
+        last_timing_.total_ms = shot_time_ms - draw_start_time_;
+        if (hold_start_time_ > 0) {
+            last_timing_.draw_ms = hold_start_time_ - draw_start_time_;
+            last_timing_.hold_ms = shot_time_ms - hold_start_time_;
+        } else {
+            // Shot during draw (no hold phase)
+            last_timing_.draw_ms = shot_time_ms - draw_start_time_;
+            last_timing_.hold_ms = 0;
+        }
+    } else {
+        // Snap shot from IDLE (no draw/hold)
+        last_timing_.draw_ms = 0;
+        last_timing_.hold_ms = 0;
+        last_timing_.total_ms = 0;
+    }
 }
 
 void ShotDetector::update(float accel[3], float gyro[3], float pitch, float roll, uint32_t timestamp_ms) {
@@ -48,9 +72,12 @@ void ShotDetector::update(float accel[3], float gyro[3], float pitch, float roll
     case ShotState::IDLE:
         peak_angular_vel_ = 0.0f;
         peak_accel_mag_ = 0.0f;
+        draw_start_time_ = 0;
+        hold_start_time_ = 0;
 
         // Detect draw start: significant pitch change rate (arm rising)
         if (fabsf(gyro[1]) > config_.draw_pitch_rate) {
+            draw_start_time_ = timestamp_ms;
             transitionTo(ShotState::DRAW_DETECTED, timestamp_ms);
         }
 
@@ -64,6 +91,7 @@ void ShotDetector::update(float accel[3], float gyro[3], float pitch, float roll
             last_shot_.draw_angle = 0.0f;
             last_shot_.peak_angular_vel = peak_angular_vel_;
             last_shot_.accel_magnitude = accelMag;
+            recordTiming(timestamp_ms);
             shot_fired_flag_ = true;
             transitionTo(ShotState::RECOVERY, timestamp_ms);
         }
@@ -74,6 +102,7 @@ void ShotDetector::update(float accel[3], float gyro[3], float pitch, float roll
         if (angularVel < config_.hold_stability) {
             hold_pitch_ = pitch;
             hold_roll_ = roll;
+            hold_start_time_ = timestamp_ms;
             transitionTo(ShotState::HOLD, timestamp_ms);
         }
 
@@ -90,6 +119,7 @@ void ShotDetector::update(float accel[3], float gyro[3], float pitch, float roll
             last_shot_.draw_angle = 0.0f;
             last_shot_.peak_angular_vel = peak_angular_vel_;
             last_shot_.accel_magnitude = accelMag;
+            recordTiming(timestamp_ms);
             shot_fired_flag_ = true;
             transitionTo(ShotState::RECOVERY, timestamp_ms);
         }
@@ -104,6 +134,7 @@ void ShotDetector::update(float accel[3], float gyro[3], float pitch, float roll
             last_shot_.draw_angle = 0.0f;
             last_shot_.peak_angular_vel = peak_angular_vel_;
             last_shot_.accel_magnitude = accelMag;
+            recordTiming(timestamp_ms);
             shot_fired_flag_ = true;
             transitionTo(ShotState::RECOVERY, timestamp_ms);
         }

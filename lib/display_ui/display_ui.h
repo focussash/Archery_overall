@@ -3,18 +3,19 @@
 #include "hal_interface.h"
 #include "session.h"
 
-// Named RGB565 colors
+// Named RGB888 colors (values > 0xFFFF go through LovyanGFX color pipeline,
+// which handles panel-specific color order automatically)
 namespace Color {
-    constexpr uint32_t BLACK   = 0x0000;
-    constexpr uint32_t WHITE   = 0xFFFF;
-    constexpr uint32_t RED     = 0xF800;
-    constexpr uint32_t GREEN   = 0x07E0;
-    constexpr uint32_t BLUE    = 0x001F;
-    constexpr uint32_t CYAN    = 0x07FF;
-    constexpr uint32_t YELLOW  = 0xFFE0;
-    constexpr uint32_t ORANGE  = 0xFD20;
-    constexpr uint32_t GRAY    = 0x7BEF;
-    constexpr uint32_t DARKGRAY = 0x4208;
+    constexpr uint32_t BLACK    = 0x000000;
+    constexpr uint32_t WHITE    = 0xFFFFFF;
+    constexpr uint32_t RED      = 0xFF0000;
+    constexpr uint32_t GREEN    = 0x00FF00;
+    constexpr uint32_t BLUE     = 0x0000FF;
+    constexpr uint32_t CYAN     = 0x00FFFF;
+    constexpr uint32_t YELLOW   = 0xFFFF00;
+    constexpr uint32_t ORANGE   = 0xFF8C00;
+    constexpr uint32_t GRAY     = 0x808080;
+    constexpr uint32_t DARKGRAY = 0x404040;
 }
 
 enum class ScreenID : uint8_t {
@@ -56,6 +57,11 @@ struct DisplayData {
     uint8_t buffer_count;
     uint8_t buffer_capacity;
 
+    // Status toast (temporary message, e.g. form check events)
+    const char* toast_msg;      // nullptr = no toast
+    uint32_t toast_color;
+    uint32_t toast_expire_ms;   // millis() when toast should disappear
+
     // Config (for display reference)
     float base_cant;
     float base_elev;
@@ -89,4 +95,7 @@ private:
 
     // Helper: draw the common status bar (top 10px)
     void drawStatusBar(const DisplayData& data);
+
+    // Helper: draw toast overlay if active
+    void drawToast(const DisplayData& data);
 };

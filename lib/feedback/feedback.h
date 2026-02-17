@@ -13,6 +13,9 @@ enum class PatternID : uint8_t {
     RUSHING,             // Fast descending beeps
     HOLDING_TOO_LONG,    // Slow ascending beeps
     FATIGUE_WARNING,     // Periodic low pulse
+    DRAW_NOTIFY,         // Brief draw detection blip
+    FORM_ALIGNED,        // Double-blip: form is good
+    FORM_DEVIATED,       // Low blip: form drifted
     COUNT
 };
 

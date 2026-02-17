@@ -25,7 +25,9 @@ ConfigStore::ConfigStore()
       draw_baseline_(DEFAULT_DRAW_BASELINE),
       cant_tolerance_(DEFAULT_CANT_TOLERANCE),
       elevation_tolerance_(DEFAULT_ELEVATION_TOLERANCE),
-      draw_tolerance_(DEFAULT_DRAW_TOLERANCE) {}
+      draw_tolerance_(DEFAULT_DRAW_TOLERANCE),
+      form_check_enabled_(true),
+      shot_feedback_enabled_(true) {}
 
 void ConfigStore::load() {
 #ifndef NATIVE_TEST
@@ -36,6 +38,8 @@ void ConfigStore::load() {
     cant_tolerance_ = prefs.getFloat("cant_tol", DEFAULT_CANT_TOLERANCE);
     elevation_tolerance_ = prefs.getFloat("elev_tol", DEFAULT_ELEVATION_TOLERANCE);
     draw_tolerance_ = prefs.getFloat("draw_tol", DEFAULT_DRAW_TOLERANCE);
+    form_check_enabled_ = prefs.getUChar("form_chk", 1) != 0;
+    shot_feedback_enabled_ = prefs.getUChar("shot_fb", 1) != 0;
     prefs.end();
 #endif
 }
@@ -49,6 +53,8 @@ void ConfigStore::save() {
     prefs.putFloat("cant_tol", cant_tolerance_);
     prefs.putFloat("elev_tol", elevation_tolerance_);
     prefs.putFloat("draw_tol", draw_tolerance_);
+    prefs.putUChar("form_chk", form_check_enabled_ ? 1 : 0);
+    prefs.putUChar("shot_fb", shot_feedback_enabled_ ? 1 : 0);
     prefs.end();
 #endif
 }

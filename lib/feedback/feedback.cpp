@@ -62,6 +62,22 @@ static const BeepStep PATTERN_FATIGUE_WARNING[] = {
     {600, 150, 0}
 };
 
+// Brief draw detection blip
+static const BeepStep PATTERN_DRAW_NOTIFY[] = {
+    {1500, 40, 0}
+};
+
+// Double-blip: form is good (aligned)
+static const BeepStep PATTERN_FORM_ALIGNED[] = {
+    {2200, 30, 40},
+    {2200, 30, 0}
+};
+
+// Low blip: form deviated
+static const BeepStep PATTERN_FORM_DEVIATED[] = {
+    {1000, 60, 0}
+};
+
 struct PatternDef {
     const BeepStep* steps;
     uint8_t length;
@@ -78,6 +94,9 @@ static const PatternDef PATTERNS[] = {
     {PATTERN_RUSHING,             4},
     {PATTERN_HOLDING_TOO_LONG,    4},
     {PATTERN_FATIGUE_WARNING,     2},
+    {PATTERN_DRAW_NOTIFY,         1},
+    {PATTERN_FORM_ALIGNED,        2},
+    {PATTERN_FORM_DEVIATED,       1},
 };
 
 FeedbackEngine::FeedbackEngine(HalInterface* hal)

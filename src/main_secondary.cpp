@@ -4,6 +4,7 @@
 #include <hal_m5unified.h>
 #include <complementary_filter.h>
 #include <espnow_comm.h>
+#include <display_ui.h>  // For Color constants
 
 static HalM5Unified hal;
 static ComplementaryFilter filter(0.98f);
@@ -34,13 +35,13 @@ void setup() {
     hal.displayClear();
     hal.displaySetTextSize(2);
     hal.displaySetCursor(10, 10);
-    hal.displaySetTextColor(0xF800);  // Red
+    hal.displaySetTextColor(Color::RED);
     hal.displayPrint("Archery");
     hal.displaySetCursor(10, 35);
     hal.displayPrint("Wearable");
     hal.displaySetTextSize(1);
     hal.displaySetCursor(10, 60);
-    hal.displaySetTextColor(0xFFFF);
+    hal.displaySetTextColor(Color::WHITE);
     hal.displayPrint("SECONDARY - MVP");
 
     Serial.println("=== Archery Wearable - SECONDARY ===");
@@ -101,24 +102,24 @@ void loop() {
             pitch, roll, txCount, battery);
 
         // Display
-        hal.displayFillRect(0, 78, hal.getDisplayWidth(), 57, 0);
+        hal.displayFillRect(0, 78, hal.getDisplayWidth(), 57, Color::BLACK);
 
         hal.displaySetTextSize(2);
         hal.displaySetCursor(5, 78);
-        hal.displaySetTextColor(0x07FF);  // Cyan
+        hal.displaySetTextColor(Color::CYAN);
         hal.displayPrintf("P:%5.1f", pitch);
         hal.displaySetCursor(5, 98);
-        hal.displaySetTextColor(0xFFE0);  // Yellow
+        hal.displaySetTextColor(Color::YELLOW);
         hal.displayPrintf("R:%5.1f", roll);
 
         // Status bar or shot echo
         hal.displaySetTextSize(1);
         hal.displaySetCursor(5, 122);
         if (shotEchoActive) {
-            hal.displaySetTextColor(0x07E0);  // Green
+            hal.displaySetTextColor(Color::GREEN);
             hal.displayPrintf("Shot #%d!", shotEchoNum);
         } else {
-            hal.displaySetTextColor(0x07E0);  // Green
+            hal.displaySetTextColor(Color::GREEN);
             hal.displayPrintf("TX:%lu Batt:%d%%", txCount, battery);
         }
     }

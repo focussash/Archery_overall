@@ -11,6 +11,8 @@
 #include <display_ui.h>
 #include <menu.h>
 #include <ble_relay.h>
+#include <cadence.h>
+#include <form_check.h>
 
 static HalM5Unified hal;
 static ComplementaryFilter filter(0.98f);
@@ -21,6 +23,8 @@ static ConfigStore configStore;
 static SessionManager* session = nullptr;
 static DisplayUI* displayUI = nullptr;
 static Menu* menu = nullptr;
+static CadenceTracker cadenceTracker(5, 0.30f);  // 5-shot baseline, 30% deviation threshold
+static FormChecker* formChecker = nullptr;
 
 static uint32_t lastDisplayTime = 0;
 static uint32_t lastStatusTime = 0;
@@ -39,6 +43,7 @@ void setup() {
     menu = new Menu(&hal, &configStore);
 
     configStore.load();
+    formChecker = new FormChecker(&configStore);
 
     if (!espnow_comm::initPrimary(1)) {
         Serial.println("ESP-NOW init FAILED!");
@@ -55,17 +60,17 @@ void setup() {
     hal.displayClear();
     hal.displaySetTextSize(2);
     hal.displaySetCursor(10, 10);
-    hal.displaySetTextColor(0x07E0);
+    hal.displaySetTextColor(Color::GREEN);
     hal.displayPrint("Archery");
     hal.displaySetCursor(10, 35);
     hal.displayPrint("Wearable");
     hal.displaySetTextSize(1);
     hal.displaySetCursor(10, 60);
-    hal.displaySetTextColor(0xFFFF);
+    hal.displaySetTextColor(Color::WHITE);
     hal.displayPrint("PRIMARY v1.0");
 
     Serial.println("=== Archery Wearable - PRIMARY ===");
-    Serial.println("SP10: BLE GATT Relay");
+    Serial.println("SP12: Real-Time Form Check + Feature Toggles");
     Serial.println("BtnA tap=cycle screen, hold=session");
     Serial.println("BtnB tap=menu");
     Serial.printf("Baselines: Cant=%.1f Elev=%.1f Draw=%.1f\n",
@@ -114,7 +119,39 @@ void loop() {
     // Shot detection
     shotDetector.update(accel, gyro, pitch, roll, now);
 
+    // Real-time form check (during draw/hold, before shot)
+    if (session->getState() == SessionState::ACTIVE && configStore.isFormCheckEnabled()) {
+        FormCheckEvent fcEvent = formChecker->update(shotDetector.getState(), pitch, roll, drawAngle);
+        if (fcEvent != FormCheckEvent::NONE) {
+            switch (fcEvent) {
+                case FormCheckEvent::DRAW_STARTED:
+                    feedback->play(PatternID::DRAW_NOTIFY);
+                    dispData.toast_msg = ">> DRAW DETECTED";
+                    dispData.toast_color = Color::CYAN;
+                    dispData.toast_expire_ms = now + 1500;
+                    Serial.println("[FormCheck] DRAW_STARTED");
+                    break;
+                case FormCheckEvent::FORM_ALIGNED:
+                    feedback->play(PatternID::FORM_ALIGNED);
+                    dispData.toast_msg = ">> FORM ALIGNED";
+                    dispData.toast_color = Color::GREEN;
+                    dispData.toast_expire_ms = now + 1500;
+                    Serial.println("[FormCheck] FORM_ALIGNED");
+                    break;
+                case FormCheckEvent::FORM_DEVIATED:
+                    feedback->play(PatternID::FORM_DEVIATED);
+                    dispData.toast_msg = ">> FORM DEVIATED";
+                    dispData.toast_color = Color::RED;
+                    dispData.toast_expire_ms = now + 1500;
+                    Serial.println("[FormCheck] FORM_DEVIATED");
+                    break;
+                default: break;
+            }
+        }
+    }
+
     if (shotDetector.shotDetected()) {
+        formChecker->reset();  // Reset form check on shot
         const ShotSnapshot& snap = shotDetector.getLastShot();
 
         if (session->getState() == SessionState::ACTIVE) {
@@ -130,22 +167,53 @@ void loop() {
             dispData.last_elev_ok = eval.elevation_ok;
             dispData.last_draw_ok = eval.draw_ok;
 
-            Serial.printf(">>> SHOT #%d | P:%.1f R:%.1f Draw:%.1f Vel:%.1f | Cant:%s Elev:%s Draw:%s\n",
+            // Cadence analysis
+            const ShotTiming& timing = shotDetector.getLastTiming();
+            CadenceResult cadence = cadenceTracker.recordShot(timing);
+
+            Serial.printf(">>> SHOT #%d | P:%.1f R:%.1f Draw:%.1f Vel:%.1f | Cant:%s Elev:%s Draw:%s",
                 session->getShotCount(), snap.pitch, snap.roll, drawAngle, snap.peak_angular_vel,
                 eval.cant_ok ? "OK" : "EXCEEDED",
                 eval.elevation_ok ? "OK" : "EXCEEDED",
                 eval.draw_ok ? "OK" : "EXCEEDED");
-
-            // Play appropriate feedback pattern
-            if (eval.cant_ok && eval.elevation_ok && eval.draw_ok) {
-                feedback->play(PatternID::GOOD_FORM);
-            } else if (!eval.cant_ok) {
-                feedback->play(PatternID::CANT_EXCEEDED);
-            } else if (!eval.draw_ok) {
-                feedback->play(PatternID::DRAW_INCONSISTENT);
-            } else {
-                feedback->play(PatternID::SHOT_DETECTED);
+            Serial.printf(" | T:%lums D:%lums H:%lums",
+                timing.total_ms, timing.draw_ms, timing.hold_ms);
+            if (cadence.has_baseline) {
+                Serial.printf(" Avg:%lums Dev:%.0f%%",
+                    cadence.avg_total_ms, cadence.total_deviation * 100.0f);
+                if (cadence.rushing) Serial.print(" RUSHING!");
+                if (cadence.holding_too_long) Serial.print(" HOLD_LONG!");
             }
+            Serial.println();
+
+            // Play appropriate feedback pattern (if shot feedback enabled)
+            // Also set toast to show what the beep means
+            if (cadence.rushing) {
+                dispData.toast_msg = "SHOT: RUSHING!";
+                dispData.toast_color = Color::ORANGE;
+                if (configStore.isShotFeedbackEnabled()) feedback->play(PatternID::RUSHING);
+            } else if (cadence.holding_too_long) {
+                dispData.toast_msg = "SHOT: HOLD TOO LONG!";
+                dispData.toast_color = Color::ORANGE;
+                if (configStore.isShotFeedbackEnabled()) feedback->play(PatternID::HOLDING_TOO_LONG);
+            } else if (eval.cant_ok && eval.elevation_ok && eval.draw_ok) {
+                dispData.toast_msg = "SHOT: GOOD FORM";
+                dispData.toast_color = Color::GREEN;
+                if (configStore.isShotFeedbackEnabled()) feedback->play(PatternID::GOOD_FORM);
+            } else if (!eval.cant_ok) {
+                dispData.toast_msg = "SHOT: CANT EXCEEDED";
+                dispData.toast_color = Color::RED;
+                if (configStore.isShotFeedbackEnabled()) feedback->play(PatternID::CANT_EXCEEDED);
+            } else if (!eval.draw_ok) {
+                dispData.toast_msg = "SHOT: DRAW OFF";
+                dispData.toast_color = Color::RED;
+                if (configStore.isShotFeedbackEnabled()) feedback->play(PatternID::DRAW_INCONSISTENT);
+            } else {
+                dispData.toast_msg = "SHOT: ELEV EXCEEDED";
+                dispData.toast_color = Color::YELLOW;
+                if (configStore.isShotFeedbackEnabled()) feedback->play(PatternID::SHOT_DETECTED);
+            }
+            dispData.toast_expire_ms = now + 2000;
 
             // Notify Secondary about the shot
             espnow_comm::sendShotNotify(session->getShotCount());
@@ -157,7 +225,9 @@ void loop() {
         } else {
             Serial.printf(">>> SHOT (no session) P:%.1f R:%.1f Accel:%.2fg Draw:%.1f\n",
                 snap.pitch, snap.roll, snap.accel_magnitude, drawAngle);
-            feedback->play(PatternID::SHOT_DETECTED);
+            if (configStore.isShotFeedbackEnabled()) {
+                feedback->play(PatternID::SHOT_DETECTED);
+            }
         }
     }
 
@@ -194,6 +264,8 @@ void loop() {
                     session->getShotCount(), session->getElapsedMs(now), shotBuffer.getCount());
             } else {
                 session->start(now);
+                cadenceTracker.reset();
+                formChecker->reset();
                 dispData.has_last_shot = false;
                 feedback->play(PatternID::SESSION_START);
                 Serial.println("Session STARTED");
@@ -215,6 +287,8 @@ void loop() {
     BleCommand bleCmd = ble_relay::getCommand();
     if (bleCmd.session_start && session->getState() != SessionState::ACTIVE) {
         session->start(now);
+        cadenceTracker.reset();
+        formChecker->reset();
         dispData.has_last_shot = false;
         feedback->play(PatternID::SESSION_START);
         Serial.println("Session STARTED (BLE command)");
@@ -247,6 +321,11 @@ void loop() {
 
     if (splashDone && (now - lastDisplayTime >= 100)) {
         lastDisplayTime = now;
+
+        // Expire toast
+        if (dispData.toast_msg != nullptr && now >= dispData.toast_expire_ms) {
+            dispData.toast_msg = nullptr;
+        }
 
         // Fill display data struct
         dispData.pitch = pitch;

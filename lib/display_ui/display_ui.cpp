@@ -33,6 +33,9 @@ void DisplayUI::draw(const DisplayData& data) {
         case ScreenID::SESSION: drawSession(data); break;
         case ScreenID::MENU:    break; // Menu module handles its own drawing
     }
+
+    // Toast overlay (temporary status message)
+    drawToast(data);
 }
 
 // ── Status bar (top 10px, shared by all screens) ──
@@ -236,4 +239,22 @@ void DisplayUI::drawSession(const DisplayData& data) {
     hal_->displaySetCursor(2, 127);
     hal_->displaySetTextColor(Color::DARKGRAY);
     hal_->displayPrint("[SESSION] A:next B:menu");
+}
+
+// ── Toast overlay ──
+
+void DisplayUI::drawToast(const DisplayData& data) {
+    int w = hal_->getDisplayWidth();
+    int y = 112;  // Just above bottom help line
+
+    if (data.toast_msg != nullptr && data.toast_expire_ms > 0) {
+        hal_->displayFillRect(0, y, w, 12, Color::BLACK);
+        hal_->displaySetTextSize(1);
+        hal_->displaySetCursor(2, y + 2);
+        hal_->displaySetTextColor(data.toast_color);
+        hal_->displayPrint(data.toast_msg);
+    } else {
+        // Clear toast area
+        hal_->displayFillRect(0, y, w, 12, Color::BLACK);
+    }
 }

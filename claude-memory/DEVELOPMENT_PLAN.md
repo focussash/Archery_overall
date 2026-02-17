@@ -65,7 +65,8 @@ wearable m5stick/
 | 9 | Display UI + Menu + Thresholds | Tier 2 | Config menus, live status, threshold adjustment |
 | 10 | BLE GATT Relay | Tier 2 | ShotPacket_t notifications to phone |
 | 11 | Pre-Shot Routine Timer | Tier 2 | Cadence detection and timing alerts |
-| 12 | Fatigue Monitoring + Calibration | Tier 3 | Variance tracking, guided IMU calibration |
+| 12 | Real-Time Form Check + Feature Toggles | Tier 2 | Live form feedback during aiming, toggleable features, menu restructure |
+| 13 | Fatigue Monitoring + Calibration | Tier 3 | Variance tracking, guided IMU calibration |
 
 ---
 
@@ -652,7 +653,83 @@ Detect the archer's raise-draw-release cadence and alert if timing is abnormal.
 
 ---
 
-## Subproject 12: Fatigue Monitoring + Calibration + Polish
+## Subproject 12: Real-Time Form Check + Feature Toggles + Menu Restructure
+
+### Goal
+Provide real-time audio feedback during the aiming/hold phase (not just after shots). Add toggleable feature settings and restructure menu into two-level hierarchy.
+
+### Files to Create
+- `lib/form_check/form_check.h`
+- `lib/form_check/form_check.cpp`
+
+### Files to Modify
+- `lib/feedback/feedback.h` (add 3 new patterns)
+- `lib/feedback/feedback.cpp` (pattern definitions)
+- `lib/session/session.h` (add feature toggles to ConfigStore)
+- `lib/session/session.cpp` (NVS load/save for toggles)
+- `lib/menu/menu.h` (two-level menu structure)
+- `lib/menu/menu.cpp` (rewrite navigation + rendering)
+- `lib/ble_relay/ble_relay.h` (extend BleConfigPacket to 26 bytes)
+- `lib/ble_relay/ble_relay.cpp` (apply/read toggles over BLE)
+- `src/main_primary.cpp` (integrate FormChecker, conditional feedback)
+
+### Substeps
+
+**12.1** Add feature toggles to ConfigStore:
+- `form_check_enabled_` (default: true) — NVS key `"form_chk"`
+- `shot_feedback_enabled_` (default: true) — NVS key `"shot_fb"`
+
+**12.2** Add 3 new beep patterns:
+- `DRAW_NOTIFY` — 1500Hz, 40ms (brief "I see your draw")
+- `FORM_ALIGNED` — 2200Hz double-blip (30ms + 40ms gap + 30ms) ("form is good")
+- `FORM_DEVIATED` — 1000Hz, 60ms ("form drifted")
+
+**12.3** Create FormChecker module:
+- Tracks ShotDetector state transitions (prev_state_ vs current)
+- Emits events: DRAW_STARTED, FORM_ALIGNED, FORM_DEVIATED
+- Fires only on transitions (not every loop)
+- Uses ConfigStore baselines/tolerances for alignment check
+- Returns events to main loop (doesn't play sounds directly)
+
+**12.4** Restructure menu into two-level hierarchy:
+```
+PARENT MENU          FEATURE SETTINGS      PARAM SETTINGS
+├ Feature Settings → ├ Form Check [ON]     ├ Cant Base: 0.0°
+├ Param Settings   → ├ Shot Feedback [ON]  ├ Cant Tol: 5.0°
+└ Exit               └ Back                ├ Elev Base: 0.0°
+                                           ├ Elev Tol: 10.0°
+                                           ├ Draw Base: 0.0°
+                                           ├ Draw Tol: 15.0°
+                                           └ Back
+```
+- BtnA = next item, BtnB = select/toggle/edit
+- Feature toggles: BtnB = instant toggle (no edit mode)
+- NVS save on parent-level Exit only
+
+**12.5** Integrate into main loop:
+- FormChecker.update() after shotDetector.update()
+- Play form check beeps if form_check_enabled
+- Wrap post-shot feedback with shot_feedback_enabled check
+- Reset FormChecker on shot detected and session start
+
+**12.6** Extend BLE config packet:
+- BleConfigPacket grows from 24 → 26 bytes (add 2 uint8_t for toggles)
+
+### Verification
+- [ ] Build compiles (`pio run -e primary`)
+- [ ] Menu: BtnB opens parent menu with 3 items
+- [ ] Feature Settings: toggle Form Check ON/OFF, toggle Shot Feedback ON/OFF
+- [ ] Param Settings: same as before (6 params + Back)
+- [ ] Settings persist across reboot (NVS)
+- [ ] Form Check ON: draw → beep; hold with good form → double-blip; deviate → low blip
+- [ ] Form Check OFF: no beeps during draw/hold
+- [ ] Shot Feedback ON/OFF: controls post-shot beeps
+- [ ] Serial output shows [FormCheck] events
+- [ ] BLE: 26-byte config characteristic
+
+---
+
+## Subproject 13: Fatigue Monitoring + Calibration + Polish
 
 ### Goal
 Detect form degradation over a session, provide guided IMU calibration, and final polish.

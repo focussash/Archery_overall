@@ -24,7 +24,7 @@ struct __attribute__((packed)) BleDeviceStatus {
     uint8_t shot_count;     // Current session shot count
 };
 
-// Config packet (24 bytes, read/write) — 6 floats
+// Config packet (26 bytes, read/write) — 6 floats + 2 toggle bytes
 struct __attribute__((packed)) BleConfigPacket {
     float cant_baseline;
     float cant_tolerance;
@@ -32,6 +32,8 @@ struct __attribute__((packed)) BleConfigPacket {
     float elev_tolerance;
     float draw_baseline;
     float draw_tolerance;
+    uint8_t form_check_enabled;     // 0 = off, 1 = on
+    uint8_t shot_feedback_enabled;  // 0 = off, 1 = on
 };
 
 // Pending commands from phone (polled by main loop)

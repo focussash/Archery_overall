@@ -9,6 +9,7 @@ void HalM5Unified::init() {
     M5.begin(cfg);
 
     M5.Display.setRotation(1);
+    M5.Display.setColorDepth(24);  // Force 24-bit mode for proper RGB888 color handling
     M5.Display.fillScreen(TFT_BLACK);
     M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
 

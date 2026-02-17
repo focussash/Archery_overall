@@ -248,3 +248,99 @@ Verification:
 - [x] Write 0x02 to Session Control → session stops (falling tone)
 - [x] Disconnect → reconnect → subscribe → buffered shots drain
 - [x] ESP-NOW still works while BLE is connected (Secondary visible on Primary + shot notifications to phone simultaneously)
+
+## Subproject 11: Pre-Shot Routine Timer
+**Status: VERIFIED**
+
+Files created:
+- lib/cadence/cadence.h (CadenceTracker class, CadenceResult struct)
+- lib/cadence/cadence.cpp (rolling average over 16-shot circular buffer, deviation detection)
+- test/test_cadence/test_cadence.cpp (9 native tests — blocked by MinGW 15.2.0 toolchain issue)
+
+Files modified:
+- lib/shot_detect/shot_detect.h (added ShotTiming struct, getLastTiming(), timing tracking members)
+- lib/shot_detect/shot_detect.cpp (recordTiming() computes draw/hold/total durations from state transitions)
+- src/main_primary.cpp (integrated CadenceTracker, cadence alerts override form feedback, reset on session start)
+
+Implementation details:
+- ShotTiming: draw_ms (DRAW_DETECTED duration), hold_ms (HOLD duration), total_ms (raise-to-release)
+- CadenceTracker: 16-shot circular buffer, configurable min_shots (5) and deviation threshold (30%)
+- Compares current shot against rolling average of prior shots
+- RUSHING: total_ms < avg * (1 - threshold) → fast descending beep pattern
+- HOLDING_TOO_LONG: hold_ms > avg * (1 + threshold) → slow ascending beep pattern
+- Cadence alerts take priority over form feedback in beep selection
+- Snap shots (T:0ms, from IDLE) are skipped in cadence tracking
+- Cadence resets on session start (button or BLE command)
+- Timing data printed in serial: T:___ms D:___ms H:___ms Avg:___ms Dev:___%
+
+Known issues:
+- Native tests blocked by MinGW g++ 15.2.0 cc1plus.exe silently crashing (toolchain issue, not code)
+- MinGW was updated via scoop on 2026-02-13, all native_test environments affected
+
+Build results:
+- [x] `pio run -e primary` — SUCCESS (RAM 17.9%, Flash 37.8%)
+
+Verification:
+- [x] Timing data (draw/hold/total) appears in serial output for each shot
+- [x] After 5 shots, deviation percentage shown (Avg and Dev fields)
+- [x] Consistent timing → no extra alerts (shot 8: -13%, within threshold)
+- [x] Fast shots → RUSHING! detected with distinct descending beep (shots 6,7,9)
+- [x] Long hold → HOLD_LONG! detected with distinct ascending beep (shot 16: 454%)
+- [x] Different beep patterns audibly confirmed by user
+
+## Subproject 12: Real-Time Form Check + Feature Toggles + Menu Restructure + Color Fix
+**Status: PARTIALLY VERIFIED — FORM CHECK NEEDS SECONDARY TESTING**
+
+Files created:
+- lib/form_check/form_check.h (FormChecker class, FormCheckEvent enum)
+- lib/form_check/form_check.cpp (state transition tracking, alignment checking)
+
+Files modified:
+- lib/feedback/feedback.h (added DRAW_NOTIFY, FORM_ALIGNED, FORM_DEVIATED patterns)
+- lib/feedback/feedback.cpp (3 new pattern definitions added to PATTERNS[])
+- lib/session/session.h (added feature toggle getters/setters to ConfigStore)
+- lib/session/session.cpp (NVS load/save for form_chk and shot_fb toggle keys)
+- lib/menu/menu.h (rewritten: MenuLevel enum, two-level hierarchy with ParentItem/FeatureItem/ParamItem)
+- lib/menu/menu.cpp (rewritten: parent menu + Feature Settings sub-menu + Param Settings sub-menu)
+- lib/ble_relay/ble_relay.h (BleConfigPacket extended from 24 to 26 bytes with toggle fields)
+- lib/ble_relay/ble_relay.cpp (updateConfig/applyReceivedConfig handle toggle fields)
+- src/main_primary.cpp (FormChecker integration, conditional feedback, toast display, resets on session/shot)
+- src/main_secondary.cpp (replaced hardcoded RGB565 colors with Color:: constants)
+- lib/display_ui/display_ui.h (Color namespace: RGB565 → RGB888; added toast fields to DisplayData; added drawToast)
+- lib/display_ui/display_ui.cpp (added drawToast method for temporary status messages)
+- lib/hal/hal_m5unified.cpp (added setColorDepth(24) in init — fixes color rendering)
+- claude-memory/DEVELOPMENT_PLAN.md (SP12 inserted, old SP12 renumbered to SP13)
+
+Implementation details:
+- FormChecker monitors ShotDetector state transitions, fires events only on changes
+- DRAW_STARTED: when entering DRAW_DETECTED (1500Hz 40ms blip)
+- FORM_ALIGNED: when entering HOLD with good form or regaining alignment (2200Hz double-blip)
+- FORM_DEVIATED: when angles drift outside tolerance during HOLD (1000Hz 60ms blip)
+- Feature toggles: form_check_enabled (NVS key "form_chk"), shot_feedback_enabled (NVS key "shot_fb")
+- Menu restructured: Parent (Features/Params/Exit) → Feature Settings (Form Check/Shot Feedback/Back) → Param Settings (6 values + Back)
+- BLE config packet grew from 24 to 26 bytes (2 uint8_t toggle fields appended)
+- Toast display: temporary color-coded text overlay for all beep events (1.5-2s duration)
+- Display color fix: setColorDepth(24) + RGB888 constants resolves long-standing color issue
+
+Display color fix:
+- Root cause: LovyanGFX in 16-bit mode misinterprets uint32_t color values for M5StickC panels
+- Fix: M5.Display.setColorDepth(24) forces proper RGB888 conversion pipeline
+- All Color:: constants changed from RGB565 (e.g. 0xF800) to RGB888 (e.g. 0xFF0000)
+- All hardcoded hex colors in src/ replaced with Color:: constants
+- Resolves the "blue instead of green" issue that existed since SP8
+
+Build results:
+- [x] `pio run -e primary` — SUCCESS (RAM 17.9%, Flash 37.9%)
+- [x] `pio run -e secondary` — SUCCESS
+
+Verification:
+- [x] Menu: BtnB opens parent menu with 3 items (Features/Params/Save&Exit)
+- [x] Feature Settings: toggle Form Check ON/OFF, toggle Shot Feedback ON/OFF
+- [x] Form Check events display toast messages with correct colors
+- [x] Display colors now correct (green=green, red=red, cyan=cyan)
+- [ ] Param Settings: same as before (6 params + Back)
+- [ ] Settings persist across reboot (NVS)
+- [ ] Form Check with secondary connected (draw angle evaluation)
+- [ ] Shot Feedback ON/OFF toggle verification
+- [ ] Serial output shows [FormCheck] events
+- [ ] BLE: 26-byte config characteristic

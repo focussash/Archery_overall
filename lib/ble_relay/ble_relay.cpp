@@ -235,6 +235,8 @@ void updateConfig(const ConfigStore* config) {
     pkt.elev_tolerance = config->getElevationTolerance();
     pkt.draw_baseline = config->getDrawBaseline();
     pkt.draw_tolerance = config->getDrawTolerance();
+    pkt.form_check_enabled = config->isFormCheckEnabled() ? 1 : 0;
+    pkt.shot_feedback_enabled = config->isShotFeedbackEnabled() ? 1 : 0;
 
     s_config_char->setValue(reinterpret_cast<const uint8_t*>(&pkt), sizeof(BleConfigPacket));
 }
@@ -257,6 +259,8 @@ void applyReceivedConfig(ConfigStore* config) {
     config->setElevationTolerance(s_received_config.elev_tolerance);
     config->setDrawBaseline(s_received_config.draw_baseline);
     config->setDrawTolerance(s_received_config.draw_tolerance);
+    config->setFormCheckEnabled(s_received_config.form_check_enabled != 0);
+    config->setShotFeedbackEnabled(s_received_config.shot_feedback_enabled != 0);
     config->save();
 }
 

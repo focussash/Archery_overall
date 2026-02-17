@@ -43,6 +43,12 @@ public:
     void setElevationTolerance(float val) { elevation_tolerance_ = val; }
     void setDrawTolerance(float val) { draw_tolerance_ = val; }
 
+    // Feature toggles
+    bool isFormCheckEnabled() const { return form_check_enabled_; }
+    bool isShotFeedbackEnabled() const { return shot_feedback_enabled_; }
+    void setFormCheckEnabled(bool val) { form_check_enabled_ = val; }
+    void setShotFeedbackEnabled(bool val) { shot_feedback_enabled_ = val; }
+
 private:
     float cant_baseline_;
     float elevation_baseline_;
@@ -50,6 +56,8 @@ private:
     float cant_tolerance_;
     float elevation_tolerance_;
     float draw_tolerance_;
+    bool form_check_enabled_;
+    bool shot_feedback_enabled_;
 };
 
 class SessionManager {
