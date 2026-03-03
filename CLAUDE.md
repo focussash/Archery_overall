@@ -1,23 +1,28 @@
-# CLAUDE.md
+# CLAUDE.md — Binding Instructions for Claude Code
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+These instructions govern ALL work in this repository. They OVERRIDE default behavior. Follow them exactly.
 
-**Important**: Always check the `claude-memory/` folder for project context, plans, and progress tracking before starting any work.
+## FIRST STEP — EVERY Session
 
-## Development Guidelines
+**ALWAYS** read the `claude-memory/` folder (`DEVELOPMENT_PLAN.md`, `achievements.md`, `overall_design.md`) BEFORE writing any code or making any decisions. No exceptions.
 
-- **Follow the plan**: Always refer to `DEVELOPMENT_PLAN.md` before writing any code. The plan defines the implementation order and specifications.
-- **Plan changes require approval**: Even with auto-accept enabled, **you MUST ask the user for explicit permission** before modifying DEVELOPMENT_PLAN.md. Never silently iterate on the plan.
-- **Sync discussions to plan**: Whenever the user and I discuss items that deviate from or add to the existing `DEVELOPMENT_PLAN.md`, and the user agrees with the discussed changes, I must immediately update `DEVELOPMENT_PLAN.md` to incorporate them with proper modifications. Agreed-upon plan changes should never remain only in conversation.
-- **Modularity is mandatory**: Avoid monolith code at all costs. Split functionality into small, focused modules. Each file should have a single responsibility.
+## Development Rules
 
-### Progress Tracking (CRITICAL)
+1. **ALWAYS follow the plan.** Refer to `DEVELOPMENT_PLAN.md` before writing ANY code. The plan defines implementation order and specifications. NEVER deviate without approval.
 
-- **After EVERY substep**: Update `achievements.md` immediately with what was accomplished. Do not wait until a full subproject is complete.
-- **Re-read claude-memory/ after every step**: Before starting any new work, re-read `DEVELOPMENT_PLAN.md` and `achievements.md` to ensure you are still aligned with the plan and aware of current progress.
-- **One subproject at a time**: Complete and validate one subproject before moving to the next. Stop after validation and wait for user confirmation before proceeding.
-- **Validation before proceeding**: After implementing a subproject, run tests and show results to the user. Do not proceed until validation passes.
-- **Document everything**: Include test counts, file changes, any deviations from the plan (e.g., using `cnlunar` instead of `sxtwl`), and any issues encountered.
+2. **NEVER modify `DEVELOPMENT_PLAN.md` without explicit user permission.** Even with auto-accept enabled, you MUST ask first. Never silently change the plan.
+
+3. **ALWAYS sync agreed discussions into the plan.** When the user agrees to changes that deviate from or add to `DEVELOPMENT_PLAN.md`, you MUST immediately update the plan file. Agreed-upon changes must NEVER remain only in conversation.
+
+4. **Modularity is mandatory.** NEVER write monolith code. Split functionality into small, focused modules. Each file = single responsibility.
+
+## Progress Tracking — CRITICAL, NON-NEGOTIABLE
+
+- **After EVERY substep** → IMMEDIATELY update `achievements.md` with what was accomplished. Do NOT wait until a full subproject is complete.
+- **Before EVERY new piece of work** → Re-read `DEVELOPMENT_PLAN.md` AND `achievements.md` to stay aligned with the plan and aware of current progress.
+- **One subproject at a time.** Complete and validate one subproject, then STOP. Wait for user confirmation before starting the next.
+- **Validate before proceeding.** After implementing a subproject, run tests and show results to the user. NEVER proceed until validation passes.
+- **Document everything.** Include test counts, file changes, any deviations from the plan (e.g., using `cnlunar` instead of `sxtwl`), and any issues encountered.
 
 ## Environment
 
@@ -25,7 +30,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **PlatformIO CLI path**: `C:/Users/Zijie Jin/.platformio/penv/Scripts/pio.exe`
 
-**Hardware**: Two M5StickC devices (Plus / Plus2 mix). The firmware auto-detects the variant via M5Unified.
+**Hardware**: Two M5StickC devices (Plus / Plus2 mix). Firmware auto-detects variant via M5Unified.
 
 **Key library**: [M5Unified](https://github.com/m5stack/M5Unified) — unified API for IMU, display, speaker, buttons, and power across M5StickC Plus and Plus2.
 
@@ -58,8 +63,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Permissions
 
-- **Bash**: You may run ALL bash commands freely (dangerously skip permissions) **UNLESS** you are deleting files/folders or installing non-PlatformIO things. Builds, tests, uploads, serial monitor, git commands, etc. are all fine without asking.
+- **Bash commands**: Run ALL freely — builds, tests, uploads, serial monitor, git, etc.
 - **File edits**: Proceed freely for implementation work.
+- **NEVER install, uninstall, or modify ANY packages/dependencies** (pip install, npm install, scoop install, etc.) without EXPLICITLY asking the user first. This applies to ALL package managers and ALL environments — including PlatformIO's internal Python env. If a missing module blocks a build, report it and ask the user how to proceed.
 
 ## Architecture
 

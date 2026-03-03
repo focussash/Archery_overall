@@ -1,6 +1,9 @@
 #include <unity.h>
 #include "cadence.h"
 
+void setUp(void) {}
+void tearDown(void) {}
+
 void test_no_baseline_before_min_shots() {
     CadenceTracker tracker(5, 0.30f);
     ShotTiming t = {500, 1000, 1500};
