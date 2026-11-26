@@ -1,0 +1,9 @@
+# Root-level ignores only. Each sub-project keeps its own .gitignore.
+
+# OS junk
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Claude Code local settings (also in the user's global git ignore)
+**/.claude/settings.local.json
