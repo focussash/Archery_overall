@@ -66,7 +66,8 @@ wearable m5stick/
 | 10 | BLE GATT Relay | Tier 2 | ShotPacket_t notifications to phone |
 | 11 | Pre-Shot Routine Timer | Tier 2 | Cadence detection and timing alerts |
 | 12 | Real-Time Form Check + Feature Toggles | Tier 2 | Live form feedback during aiming, toggleable features, menu restructure |
-| 13 | Fatigue Monitoring + Calibration | Tier 3 | Variance tracking, guided IMU calibration |
+| 13 | IMU Calibration + Usage Manual | Tier 3 | Guided calibration flows, user documentation |
+| 14 | Final Polish | Tier 3 | Error handling, power optimization, version string |
 
 ---
 
@@ -729,51 +730,140 @@ PARENT MENU          FEATURE SETTINGS      PARAM SETTINGS
 
 ---
 
-## Subproject 13: Fatigue Monitoring + Calibration + Polish
+## Subproject 13: IMU Calibration + Usage Manual
 
 ### Goal
-Detect form degradation over a session, provide guided IMU calibration, and final polish.
+Provide guided on-device calibration flows so the archer can quickly set up both devices at the range, and write a comprehensive usage manual.
 
-### Files to Create/Modify
-- `lib/session/fatigue.h`
-- `lib/session/fatigue.cpp`
-- `lib/hal/calibration.h`
-- `lib/hal/calibration.cpp`
-- `test/test_fatigue/test_fatigue.cpp` (native test)
+### Files to Create
+- `lib/calibration/calibration.h` (CalibrationManager class, CalibrationState enum)
+- `lib/calibration/calibration.cpp` (calibration flows, display rendering, accel sampling)
+- `claude-memory/USAGE_MANUAL.md` (user-facing documentation)
+
+### Files to Modify
+- `lib/session/session.h` (add accel bias fields to ConfigStore)
+- `lib/session/session.cpp` (NVS load/save for accel bias: `cal_ax`, `cal_ay`, `cal_az`)
+- `lib/imu_math/complementary_filter.h/.cpp` (accept and apply accel bias offsets)
+- `lib/menu/menu.h/.cpp` (add "Calibrate" parent item → sub-menu with Set Baseline / Flat Cal / Back)
+- `src/main_primary.cpp` (integrate CalibrationManager, apply bias to IMU pipeline)
+
+### Design: Calibration Flows
+
+**Problem**: Archer can't press a button while holding proper form without disturbing position.
+**Solution**: Countdown approach — press button first, then get into position.
+
+**Flow A — "Set Baseline" (use at the range, every session or remount)**
+1. User selects "Calibrate → Set Baseline" from menu
+2. Screen: `SET BASELINE` / `Press A to start`
+3. User presses A
+4. Screen: countdown `Get into form... 5...4...3...2...1`
+5. Screen: `Capturing...` — averages Primary pitch/roll + Secondary draw angle over 2 seconds
+6. Saves averaged values as cant_baseline, elev_baseline, draw_baseline in ConfigStore → NVS
+7. Screen: `Saved! C:X.X° E:X.X° D:X.X°` for 2 seconds
+8. Returns to menu
+
+**Flow B — "Flat Cal" (one-time accel bias calibration)**
+1. User selects "Calibrate → Flat Cal" from menu
+2. Screen: `FLAT CALIBRATION` / `Place flat, press A`
+3. User places both devices flat on level surface, presses A
+4. Screen: `Sampling...` — averages raw accel for 2 seconds
+5. Computes bias: `bias = measured - expected_gravity` per axis (expected: ax=0, ay=0, az=1.0g)
+6. Saves bias to NVS (`cal_ax`, `cal_ay`, `cal_az`)
+7. Screen: `Bias saved!` + shows bias values for 2 seconds
+8. Returns to menu
+
+**Menu structure with calibration:**
+```
+PARENT MENU
+├ Feature Settings → [toggles]
+├ Param Settings   → [6 values]
+├ Calibrate        →
+│   ├ Set Baseline   (countdown → capture form angles → save)
+│   ├ Flat Cal       (place flat → capture accel bias → save)
+│   └ Back
+└ Save & Exit
+```
 
 ### Substeps
 
-**12.1** Implement fatigue monitoring:
-- Track rolling variance of cant angle, elevation angle, draw angle over session
-- Compare last-10-shots variance to first-10-shots variance
-- If variance increases by >50% → set `fatigue_flag` in `form_flags`
-- Add `FATIGUE_WARNING` beep pattern (periodic low pulse)
+**13.1** Add accel bias fields to ConfigStore:
+- 3 new floats: `cal_ax_bias_`, `cal_ay_bias_`, `cal_az_bias_` (default 0.0)
+- NVS keys: `cal_ax`, `cal_ay`, `cal_az`
+- Getters/setters for each
 
-**12.2** Write native tests for variance calculation:
-- Known data sequences → expected variance values
-- Fatigue detection threshold test
+**13.2** Apply accel bias in complementary filter:
+- `setBias(float bx, float by, float bz)` method
+- In `update()`: subtract bias from raw accel before computing angles
+- Main loop calls `filter.setBias(...)` after ConfigStore load
 
-**12.3** Implement guided IMU calibration:
-- Display instructions: "Place device flat on table, press button"
-- Record gravity reference for 2 seconds → compute accel bias
-- "Hold still in shooting position, press button" → record neutral angles
-- Save calibration to NVS
+**13.3** Create CalibrationManager module:
+- CalibrationState enum: `IDLE`, `BASELINE_PROMPT`, `BASELINE_COUNTDOWN`, `BASELINE_CAPTURE`, `BASELINE_DONE`, `FLATCAL_PROMPT`, `FLATCAL_CAPTURE`, `FLATCAL_DONE`
+- `startBaseline()` / `startFlatCal()` — enter the respective flow
+- `update(now, pitch, roll, drawAngle, accel[3])` — advance state machine, sample data
+- `draw(HalInterface*)` — render calibration screens (takes over display)
+- `isActive()` / `isDone()` — for main loop to know when to hand back control
+- Internal: accumulate samples during capture phase, compute averages, save to ConfigStore
 
-**12.4** Apply calibration:
-- Subtract accel bias from raw readings before sensor fusion
-- Offset neutral angles if configured
+**13.4** Add "Calibrate" sub-menu to Menu:
+- New `ParentItem::CALIBRATE` between PARAM_SETTINGS and EXIT
+- New `MenuLevel::CALIBRATE` with items: Set Baseline, Flat Cal, Back
+- Selecting Set Baseline / Flat Cal → sets a flag that main loop reads to launch CalibrationManager
 
-**12.5** Final polish:
-- Review all serial output for clean formatting
-- Ensure all error paths handled (e.g., IMU init failure → display error)
-- Power optimization: reduce display brightness during active session
-- Add version string to boot screen
+**13.5** Integrate CalibrationManager in main_primary.cpp:
+- When menu signals calibration start → enter calibration mode (CalibrationManager takes over display + buttons)
+- BtnA during calibration = confirm/proceed
+- BtnB during calibration = cancel (return to menu)
+- After calibration completes → apply new bias to filter, return to normal display
+
+**13.6** Write Usage Manual (`claude-memory/USAGE_MANUAL.md`):
+- **Hardware Overview**: M5StickC button locations (BtnA = front face, BtnB = side), wearing positions (Primary = bow wrist, Secondary = draw wrist)
+- **Power On/Off**: Side button hold to power on/off
+- **Screen Navigation**: BtnA tap cycles HOME → LIVE → SESSION → HOME
+- **Menu System**: BtnB opens menu, BtnA = next item, BtnB = select/toggle/edit, auto-timeout on param editing
+- **Calibration Procedure**: Step-by-step for both Set Baseline and Flat Cal, when to use each
+- **Running a Session**: Hold BtnA to start, shoot, hold BtnA to stop
+- **Understanding Beeps**: Table of all beep patterns and what they mean
+- **BLE Connection**: How to connect with phone app or nRF Connect
+- **Troubleshooting**: Common issues (color, connection, false triggers)
 
 ### Verification
-- [ ] `pio test -e native_test` — fatigue variance tests pass
-- [ ] Upload: run 20+ shot session, intentionally degrade form → fatigue warning beep
-- [ ] Run calibration routine → angles are more accurate after calibration
-- [ ] Calibration survives reboot (stored in NVS)
+- [ ] Build compiles (`pio run -e primary`)
+- [ ] Menu shows "Calibrate" item, sub-menu has Set Baseline / Flat Cal / Back
+- [ ] Set Baseline: countdown runs, angles captured, baselines saved to NVS
+- [ ] Set Baseline: values survive reboot
+- [ ] Set Baseline: with Secondary connected, draw baseline captures Secondary's pitch
+- [ ] Flat Cal: place flat, bias computed and saved, applied on next boot
+- [ ] Flat Cal: angles are more accurate after calibration (less drift when stationary)
+- [ ] Cancel (BtnB) during either flow returns to menu without saving
+- [ ] Usage manual is complete and accurate
+
+---
+
+## Subproject 14: Final Polish
+
+### Goal
+Clean up serial output, harden error handling, optimize power, and add version info.
+
+### Files to Modify
+- `src/main_primary.cpp` (serial formatting, error paths, display brightness)
+- `src/main_secondary.cpp` (same)
+- `lib/hal/hal_m5unified.cpp` (brightness control API)
+
+### Substeps
+
+**14.1** Review and clean all serial output for consistent formatting
+
+**14.2** Add error handling for critical init failures (IMU, ESP-NOW, BLE) — display error screen instead of silent failure
+
+**14.3** Power optimization: reduce display brightness during active session (screen is less useful while shooting), restore on session end
+
+**14.4** Add firmware version string to boot splash (e.g., "v1.1")
+
+### Verification
+- [ ] Serial output is clean, consistent, and readable
+- [ ] Unplug IMU (if possible) or simulate failure → error displayed
+- [ ] Start session → display dims; stop session → display brightens
+- [ ] Boot splash shows version string
 - [ ] Full system runs stable for 15+ minutes without crash
 
 ---
@@ -803,12 +893,13 @@ Detect form degradation over a session, provide guided IMU calibration, and fina
 
 ## End State
 
-After all 12 subprojects, the system delivers:
+After all 14 subprojects, the system delivers:
 - **Two-device wearable** with ESP-NOW communication
 - **Real-time shot detection** with form evaluation
-- **Audio feedback** (6+ distinct patterns)
+- **Audio feedback** (9+ distinct patterns including real-time form check)
 - **BLE relay** to Android app (ShotPacket_t, 20 bytes per shot)
-- **Menu system** with persistent threshold configuration
-- **Cadence monitoring** and **fatigue detection**
-- **Guided IMU calibration**
+- **Menu system** with persistent threshold configuration and feature toggles
+- **Cadence monitoring** with rushing/holding alerts
+- **Guided calibration** (form baseline capture + accel bias correction)
+- **Usage manual** for end-user reference
 - **HAL architecture** ready for AtomS3R/ESP32-S3 upgrade (only HAL layer changes)

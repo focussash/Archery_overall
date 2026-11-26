@@ -49,6 +49,14 @@ public:
     void setFormCheckEnabled(bool val) { form_check_enabled_ = val; }
     void setShotFeedbackEnabled(bool val) { shot_feedback_enabled_ = val; }
 
+    // Accel bias calibration (g units)
+    float getCalAxBias() const { return cal_ax_bias_; }
+    float getCalAyBias() const { return cal_ay_bias_; }
+    float getCalAzBias() const { return cal_az_bias_; }
+    void setCalAxBias(float val) { cal_ax_bias_ = val; }
+    void setCalAyBias(float val) { cal_ay_bias_ = val; }
+    void setCalAzBias(float val) { cal_az_bias_ = val; }
+
 private:
     float cant_baseline_;
     float elevation_baseline_;
@@ -58,6 +66,9 @@ private:
     float draw_tolerance_;
     bool form_check_enabled_;
     bool shot_feedback_enabled_;
+    float cal_ax_bias_;
+    float cal_ay_bias_;
+    float cal_az_bias_;
 };
 
 class SessionManager {

@@ -19,6 +19,11 @@ static const float DEFAULT_CANT_TOLERANCE = 5.0f;
 static const float DEFAULT_ELEVATION_TOLERANCE = 10.0f;
 static const float DEFAULT_DRAW_TOLERANCE = 15.0f;
 
+// Default accel bias (g units)
+static const float DEFAULT_CAL_AX_BIAS = 0.0f;
+static const float DEFAULT_CAL_AY_BIAS = 0.0f;
+static const float DEFAULT_CAL_AZ_BIAS = 0.0f;
+
 ConfigStore::ConfigStore()
     : cant_baseline_(DEFAULT_CANT_BASELINE),
       elevation_baseline_(DEFAULT_ELEVATION_BASELINE),
@@ -27,7 +32,10 @@ ConfigStore::ConfigStore()
       elevation_tolerance_(DEFAULT_ELEVATION_TOLERANCE),
       draw_tolerance_(DEFAULT_DRAW_TOLERANCE),
       form_check_enabled_(true),
-      shot_feedback_enabled_(true) {}
+      shot_feedback_enabled_(true),
+      cal_ax_bias_(DEFAULT_CAL_AX_BIAS),
+      cal_ay_bias_(DEFAULT_CAL_AY_BIAS),
+      cal_az_bias_(DEFAULT_CAL_AZ_BIAS) {}
 
 void ConfigStore::load() {
 #ifndef NATIVE_TEST
@@ -40,6 +48,9 @@ void ConfigStore::load() {
     draw_tolerance_ = prefs.getFloat("draw_tol", DEFAULT_DRAW_TOLERANCE);
     form_check_enabled_ = prefs.getUChar("form_chk", 1) != 0;
     shot_feedback_enabled_ = prefs.getUChar("shot_fb", 1) != 0;
+    cal_ax_bias_ = prefs.getFloat("cal_ax", DEFAULT_CAL_AX_BIAS);
+    cal_ay_bias_ = prefs.getFloat("cal_ay", DEFAULT_CAL_AY_BIAS);
+    cal_az_bias_ = prefs.getFloat("cal_az", DEFAULT_CAL_AZ_BIAS);
     prefs.end();
 #endif
 }
@@ -55,6 +66,9 @@ void ConfigStore::save() {
     prefs.putFloat("draw_tol", draw_tolerance_);
     prefs.putUChar("form_chk", form_check_enabled_ ? 1 : 0);
     prefs.putUChar("shot_fb", shot_feedback_enabled_ ? 1 : 0);
+    prefs.putFloat("cal_ax", cal_ax_bias_);
+    prefs.putFloat("cal_ay", cal_ay_bias_);
+    prefs.putFloat("cal_az", cal_az_bias_);
     prefs.end();
 #endif
 }

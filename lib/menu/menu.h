@@ -2,19 +2,30 @@
 #include <cstdint>
 #include "hal_interface.h"
 #include "session.h"
+#include "calibration.h"  // For CalibrationRequest enum
 
 enum class MenuLevel : uint8_t {
     PARENT,
     FEATURE_SETTINGS,
-    PARAM_SETTINGS
+    PARAM_SETTINGS,
+    CALIBRATE
 };
 
 // Parent menu items
 enum class ParentItem : uint8_t {
     FEATURE_SETTINGS = 0,
     PARAM_SETTINGS,
+    CALIBRATE,
     EXIT,
     PARENT_COUNT
+};
+
+// Calibrate sub-menu items
+enum class CalibrateItem : uint8_t {
+    SET_BASELINE = 0,
+    FLAT_CAL,
+    BACK,
+    CALIBRATE_COUNT
 };
 
 // Feature settings items
@@ -45,6 +56,9 @@ public:
     void exit();    // Save and deactivate
     bool isActive() const { return active_; }
 
+    // Returns and clears pending calibration request (set when user selects calibration)
+    CalibrationRequest getCalibrationRequest();
+
     // Button handlers — call these from main when menu is active
     void onButtonA();       // Next item / increment value (+0.5)
     void onButtonB();       // Select item / toggle / decrement value (-0.5)
@@ -69,6 +83,7 @@ private:
     static constexpr uint8_t VISIBLE_ITEMS = 4;
 
     uint32_t last_input_time_;
+    CalibrationRequest cal_request_;
 
     uint8_t getItemCount() const;
     const char* getTitle() const;
@@ -87,6 +102,10 @@ private:
     void setParamValue(ParamItem id, float val);
     float getParamMin(ParamItem id) const;
     float getParamMax(ParamItem id) const;
+
+    // Calibrate menu helpers
+    const char* getCalibrateLabel(CalibrateItem id) const;
+    void drawCalibrate();
 
     void drawParent();
     void drawFeature();

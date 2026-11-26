@@ -289,7 +289,7 @@ Verification:
 - [x] Different beep patterns audibly confirmed by user
 
 ## Subproject 12: Real-Time Form Check + Feature Toggles + Menu Restructure + Color Fix
-**Status: PARTIALLY VERIFIED — FORM CHECK NEEDS SECONDARY TESTING**
+**Status: VERIFIED (2 deferred items: serial [FormCheck] events, BLE 26-byte config)**
 
 Files created:
 - lib/form_check/form_check.h (FormChecker class, FormCheckEvent enum)
@@ -338,9 +338,57 @@ Verification:
 - [x] Feature Settings: toggle Form Check ON/OFF, toggle Shot Feedback ON/OFF
 - [x] Form Check events display toast messages with correct colors
 - [x] Display colors now correct (green=green, red=red, cyan=cyan)
-- [ ] Param Settings: same as before (6 params + Back)
-- [ ] Settings persist across reboot (NVS)
-- [ ] Form Check with secondary connected (draw angle evaluation)
-- [ ] Shot Feedback ON/OFF toggle verification
-- [ ] Serial output shows [FormCheck] events
-- [ ] BLE: 26-byte config characteristic
+- [x] Param Settings: same as before (6 params + Back) — verified by user
+- [x] Settings persist across reboot (NVS) — verified by user
+- [x] Form Check with secondary connected (draw angle evaluation) — verified by user
+- [x] Shot Feedback ON/OFF toggle — verified by user
+- [ ] Serial output shows [FormCheck] events (deferred)
+- [ ] BLE: 26-byte config characteristic (deferred)
+
+## Subproject 13: IMU Calibration + Usage Manual
+**Status: CODE COMPLETE — AWAITING ON-DEVICE VERIFICATION**
+
+Files created:
+- lib/calibration/calibration.h (CalibrationManager class, CalibrationState/CalibrationRequest enums)
+- lib/calibration/calibration.cpp (state machine: prompt → countdown → capture → done → idle)
+- claude-memory/USAGE_MANUAL.md (comprehensive device usage manual)
+
+Files modified:
+- lib/session/session.h (added 3 accel bias fields: cal_ax_bias_, cal_ay_bias_, cal_az_bias_ with getters/setters)
+- lib/session/session.cpp (NVS load/save for cal_ax, cal_ay, cal_az keys; defaults to 0.0f)
+- lib/menu/menu.h (added MenuLevel::CALIBRATE, ParentItem::CALIBRATE, CalibrateItem enum, CalibrationRequest member)
+- lib/menu/menu.cpp (added Calibrate sub-menu: Set Base / Flat Cal / Back; cal_request_ handoff pattern)
+- src/main_primary.cpp (accel bias subtraction pre-filter, CalibrationManager integration, button routing priority chain)
+- platformio.ini (added calibration to native_test lib_ignore)
+
+Implementation details:
+- **Set Baseline** flow: prompt → 5s countdown (get into form) → 2s capture (average pitch/roll/drawAngle) → save to ConfigStore baselines → display results → idle
+- **Flat Cal** flow: prompt → 3s countdown (keep device flat) → 2s capture (average raw accel) → compute bias as avg - expected gravity (0,0,1) → save to ConfigStore bias → display results → idle
+- Accel bias applied PRE-FILTER: raw accel values have bias subtracted before ComplementaryFilter.update()
+- Menu-to-calibration handoff: Menu sets CalibrationRequest flag, exits, main loop checks flag and starts calibration
+- Button priority chain: calibration active → menu active → normal mode
+- Calibration update() runs every loop tick (not just at 10Hz) for maximum sample accumulation
+- Calibration draw() runs at 10Hz inside display block
+- On calibration complete: BLE config synced, results printed to serial
+- Cancel: Button B during any state returns to IDLE without saving
+
+Substeps completed:
+- [x] 13.1: Accel bias fields added to ConfigStore (session.h/session.cpp)
+- [x] 13.2: Bias subtraction applied in main_primary.cpp before filter.update()
+- [x] 13.3: CalibrationManager module created (calibration.h/calibration.cpp)
+- [x] 13.4: Calibrate sub-menu added to Menu (menu.h/menu.cpp)
+- [x] 13.5: CalibrationManager integrated in main_primary.cpp (button routing, display, BLE sync)
+- [x] 13.6: Usage manual written (claude-memory/USAGE_MANUAL.md)
+
+Build results:
+- [x] `pio run -e primary` — SUCCESS (RAM 18.0%, Flash 38.1%)
+
+Verification (on-device — pending):
+- [ ] Menu shows 4 parent items: Features, Params, Calibrate, Save&Exit
+- [ ] Calibrate sub-menu: Set Base, Flat Cal, Back
+- [ ] Set Baseline: countdown 5→1, "Capturing...", "Saved! C:X.X E:X.X D:X.X", returns to HOME
+- [ ] Set Baseline with Secondary: draw baseline captures Secondary's pitch
+- [ ] Flat Cal: "Place flat", countdown 3→1, "Sampling...", "Bias saved!", returns to HOME
+- [ ] Cancel (BtnB) during any state returns to HOME without saving
+- [ ] Baseline + bias values survive reboot (serial output confirms)
+- [ ] After Flat Cal, pitch/roll closer to 0 when device is flat

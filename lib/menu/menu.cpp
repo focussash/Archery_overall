@@ -10,6 +10,7 @@ Menu::Menu(HalInterface* hal, ConfigStore* config)
     , editing_(false)
     , scroll_top_(0)
     , last_input_time_(0)
+    , cal_request_(CalibrationRequest::NONE)
 {
 }
 
@@ -19,6 +20,7 @@ void Menu::enter() {
     selected_ = 0;
     editing_ = false;
     scroll_top_ = 0;
+    cal_request_ = CalibrationRequest::NONE;
     hal_->displayClear();
     draw();
 }
@@ -33,6 +35,7 @@ uint8_t Menu::getItemCount() const {
         case MenuLevel::PARENT:           return static_cast<uint8_t>(ParentItem::PARENT_COUNT);
         case MenuLevel::FEATURE_SETTINGS: return static_cast<uint8_t>(FeatureItem::FEATURE_COUNT);
         case MenuLevel::PARAM_SETTINGS:   return static_cast<uint8_t>(ParamItem::PARAM_COUNT);
+        case MenuLevel::CALIBRATE:        return static_cast<uint8_t>(CalibrateItem::CALIBRATE_COUNT);
     }
     return 0;
 }
@@ -42,6 +45,7 @@ const char* Menu::getTitle() const {
         case MenuLevel::PARENT:           return "MENU";
         case MenuLevel::FEATURE_SETTINGS: return "FEATURES";
         case MenuLevel::PARAM_SETTINGS:   return "PARAMETERS";
+        case MenuLevel::CALIBRATE:        return "CALIBRATE";
     }
     return "";
 }
@@ -80,7 +84,28 @@ void Menu::onButtonB() {
             selected_ = 0;
             scroll_top_ = 0;
             hal_->displayClear();
+        } else if (id == ParentItem::CALIBRATE) {
+            level_ = MenuLevel::CALIBRATE;
+            selected_ = 0;
+            scroll_top_ = 0;
+            hal_->displayClear();
         } else if (id == ParentItem::EXIT) {
+            exit();
+            return;
+        }
+    } else if (level_ == MenuLevel::CALIBRATE) {
+        CalibrateItem id = static_cast<CalibrateItem>(selected_);
+        if (id == CalibrateItem::BACK) {
+            level_ = MenuLevel::PARENT;
+            selected_ = 2;  // Highlight "Calibrate" when returning
+            scroll_top_ = 0;
+            hal_->displayClear();
+        } else if (id == CalibrateItem::SET_BASELINE) {
+            cal_request_ = CalibrationRequest::BASELINE;
+            exit();
+            return;
+        } else if (id == CalibrateItem::FLAT_CAL) {
+            cal_request_ = CalibrationRequest::FLAT_CAL;
             exit();
             return;
         }
@@ -146,6 +171,7 @@ void Menu::draw() {
         case MenuLevel::PARENT:           drawParent(); break;
         case MenuLevel::FEATURE_SETTINGS: drawFeature(); break;
         case MenuLevel::PARAM_SETTINGS:   drawParam(); break;
+        case MenuLevel::CALIBRATE:        drawCalibrate(); break;
     }
 
     // Bottom help
@@ -160,6 +186,8 @@ void Menu::draw() {
         hal_->displayPrint("[MENU] A:next B:select");
     } else if (level_ == MenuLevel::FEATURE_SETTINGS) {
         hal_->displayPrint("[FEAT] A:next B:toggle");
+    } else if (level_ == MenuLevel::CALIBRATE) {
+        hal_->displayPrint("[CAL] A:next B:select");
     } else {
         hal_->displayPrint("[PARAM] A:next B:edit");
     }
@@ -263,6 +291,7 @@ const char* Menu::getParentLabel(ParentItem id) const {
     switch (id) {
         case ParentItem::FEATURE_SETTINGS: return "Features";
         case ParentItem::PARAM_SETTINGS:   return "Params";
+        case ParentItem::CALIBRATE:        return "Calibrate";
         case ParentItem::EXIT:             return "Save&Exit";
         default: return "";
     }
@@ -351,4 +380,40 @@ float Menu::getParamMin(ParamItem id) const {
 
 float Menu::getParamMax(ParamItem id) const {
     return 90.0f;
+}
+
+// ── Calibrate menu helpers ──
+
+const char* Menu::getCalibrateLabel(CalibrateItem id) const {
+    switch (id) {
+        case CalibrateItem::SET_BASELINE: return "Set Base";
+        case CalibrateItem::FLAT_CAL:     return "Flat Cal";
+        case CalibrateItem::BACK:         return "> Back";
+        default: return "";
+    }
+}
+
+void Menu::drawCalibrate() {
+    int w = hal_->getDisplayWidth();
+    uint8_t total = static_cast<uint8_t>(CalibrateItem::CALIBRATE_COUNT);
+
+    for (uint8_t vi = 0; vi < VISIBLE_ITEMS && (scroll_top_ + vi) < total; vi++) {
+        uint8_t i = scroll_top_ + vi;
+        int y = 16 + vi * 27;
+        bool is_selected = (i == selected_);
+
+        uint32_t bg = is_selected ? Color::BLUE : Color::BLACK;
+        hal_->displayFillRect(0, y, w, 26, bg);
+
+        hal_->displaySetTextSize(2);
+        hal_->displaySetCursor(8, y + 6);
+        hal_->displaySetTextColor(is_selected ? Color::WHITE : Color::GRAY, bg);
+        hal_->displayPrint(getCalibrateLabel(static_cast<CalibrateItem>(i)));
+    }
+}
+
+CalibrationRequest Menu::getCalibrationRequest() {
+    CalibrationRequest req = cal_request_;
+    cal_request_ = CalibrationRequest::NONE;
+    return req;
 }

@@ -16,6 +16,20 @@ These instructions govern ALL work in this repository. They OVERRIDE default beh
 
 4. **Modularity is mandatory.** NEVER write monolith code. Split functionality into small, focused modules. Each file = single responsibility.
 
+## Design for Change
+
+Plans across the archery projects (this firmware, ArcheryApp, and the video mocap project in `../Archery assistant`) are expected to change as work proceeds. Whenever possible, build so components can be swapped and features added without rewrites:
+
+- **Interfaces at likely-change points.** Hardware (via the HAL), sensors, detection algorithms, feedback channels, and communication protocols sit behind interfaces. Callers depend on the interface, not the implementation.
+- **Add, don't edit.** Prefer tables, registries, and strategy patterns, so a new pattern, detector, or feedback channel is a new module rather than edits scattered through `main_*.cpp`.
+- **Version anything that crosses a boundary** (BLE packets and characteristics, ESP-NOW messages, NVS layouts). Prefer additive, backward-compatible changes. Readers tolerate fields they don't know. A breaking change gets a new version plus an adapter or migration.
+- **No magic numbers.** Thresholds and tunables live in config (NVS-backed `ConfigStore`, or named constants in one config header), not inline.
+- **Cheap extension points, no speculative features.** Leave seams where change is plausible. Don't implement features or abstractions nobody has asked for.
+
+## Documentation Updates
+
+After ANY code changes, update relevant documentation files (achievements, memory files, development plans) before ending the session. Do NOT wait to be prompted.
+
 ## Progress Tracking — CRITICAL, NON-NEGOTIABLE
 
 - **After EVERY substep** → IMMEDIATELY update `achievements.md` with what was accomplished. Do NOT wait until a full subproject is complete.
@@ -23,6 +37,14 @@ These instructions govern ALL work in this repository. They OVERRIDE default beh
 - **One subproject at a time.** Complete and validate one subproject, then STOP. Wait for user confirmation before starting the next.
 - **Validate before proceeding.** After implementing a subproject, run tests and show results to the user. NEVER proceed until validation passes.
 - **Document everything.** Include test counts, file changes, any deviations from the plan (e.g., using `cnlunar` instead of `sxtwl`), and any issues encountered.
+
+## Environment Assumptions
+
+Use the user's existing development environment (conda, venv, PlatformIO, etc.) — do NOT try to install new toolchains or interpreters unless asked. Ask which environment to use if unclear.
+
+## Read-Only Mode
+
+When asked to 'diagnose', 'audit', 'review', or 'report', do NOT edit any code files. Only read files and produce a written report/document unless explicitly told to implement fixes.
 
 ## Environment
 
@@ -63,9 +85,11 @@ These instructions govern ALL work in this repository. They OVERRIDE default beh
 
 ## Permissions
 
-- **Bash commands**: Run ALL freely — builds, tests, uploads, serial monitor, git, etc.
+- **Bash commands**: Run ALL freely — builds, tests, firmware uploads, serial monitor, etc.
+- **Git: the user owns it.** NEVER run `git add`, `commit`, `push`, or create remotes. Write the code and leave commits and pushes to the user. Read-only git (`status`, `diff`, `log`) is fine.
 - **File edits**: Proceed freely for implementation work.
 - **NEVER install, uninstall, or modify ANY packages/dependencies** (pip install, npm install, scoop install, etc.) without EXPLICITLY asking the user first. This applies to ALL package managers and ALL environments — including PlatformIO's internal Python env. If a missing module blocks a build, report it and ask the user how to proceed.
+- **NEVER delete files or folders** without asking the user first.
 
 ## Architecture
 

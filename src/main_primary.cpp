@@ -13,6 +13,7 @@
 #include <ble_relay.h>
 #include <cadence.h>
 #include <form_check.h>
+#include <calibration.h>
 
 static HalM5Unified hal;
 static ComplementaryFilter filter(0.98f);
@@ -25,6 +26,7 @@ static DisplayUI* displayUI = nullptr;
 static Menu* menu = nullptr;
 static CadenceTracker cadenceTracker(5, 0.30f);  // 5-shot baseline, 30% deviation threshold
 static FormChecker* formChecker = nullptr;
+static CalibrationManager* calibration = nullptr;
 
 static uint32_t lastDisplayTime = 0;
 static uint32_t lastStatusTime = 0;
@@ -44,6 +46,7 @@ void setup() {
 
     configStore.load();
     formChecker = new FormChecker(&configStore);
+    calibration = new CalibrationManager(&hal, &configStore);
 
     if (!espnow_comm::initPrimary(1)) {
         Serial.println("ESP-NOW init FAILED!");
@@ -81,6 +84,10 @@ void setup() {
         configStore.getCantTolerance(),
         configStore.getElevationTolerance(),
         configStore.getDrawTolerance());
+    Serial.printf("Accel Bias: X=%.4f Y=%.4f Z=%.4f\n",
+        configStore.getCalAxBias(),
+        configStore.getCalAyBias(),
+        configStore.getCalAzBias());
     Serial.println("===================================");
 
     lastLoopTime = hal.millis();
@@ -105,7 +112,11 @@ void loop() {
     imu_data_t imu;
     if (!hal.readIMU(&imu)) return;
 
-    float accel[3] = {imu.accel.x, imu.accel.y, imu.accel.z};
+    float accel[3] = {
+        imu.accel.x - configStore.getCalAxBias(),
+        imu.accel.y - configStore.getCalAyBias(),
+        imu.accel.z - configStore.getCalAzBias()
+    };
     float gyro[3] = {imu.gyro.x, imu.gyro.y, imu.gyro.z};
     filter.update(accel, gyro, dt);
     float pitch = filter.getPitch();
@@ -231,23 +242,57 @@ void loop() {
         }
     }
 
+    // ── Calibration state machine (runs every loop for sample accumulation) ──
+
+    if (calibration->isActive()) {
+        bool calDone = calibration->update(now, pitch, roll, drawAngle, accel);
+        if (calDone) {
+            hal.displayClear();
+            displayUI->setScreen(ScreenID::HOME);
+            ble_relay::updateConfig(&configStore);
+            Serial.printf("Calibration done. Bias: X=%.4f Y=%.4f Z=%.4f\n",
+                configStore.getCalAxBias(), configStore.getCalAyBias(), configStore.getCalAzBias());
+            Serial.printf("Baselines: C=%.1f E=%.1f D=%.1f\n",
+                configStore.getCantBaseline(), configStore.getElevationBaseline(),
+                configStore.getDrawBaseline());
+        }
+    }
+
     // ── Button handling ──
 
-    if (menu->isActive()) {
+    if (calibration->isActive()) {
+        // Calibration mode: buttons go to calibration
+        if (hal.getButtonA()) calibration->onButtonA();
+        if (hal.getButtonB()) calibration->onButtonB();
+    } else if (menu->isActive()) {
         // Menu mode: buttons go to menu
         if (hal.getButtonA()) menu->onButtonA();
         if (hal.getButtonB()) menu->onButtonB();
         menu->update(now);
 
-        // Menu exited? Switch display back to HOME
+        // Menu exited? Check for calibration request
         if (!menu->isActive()) {
-            displayUI->setScreen(ScreenID::HOME);
-            hal.displayClear();
-            ble_relay::updateConfig(&configStore);
-            Serial.printf("Menu closed. Base: C=%.1f E=%.1f D=%.1f | Tol: C=%.1f E=%.1f D=%.1f\n",
-                configStore.getCantBaseline(), configStore.getElevationBaseline(),
-                configStore.getDrawBaseline(), configStore.getCantTolerance(),
-                configStore.getElevationTolerance(), configStore.getDrawTolerance());
+            CalibrationRequest req = menu->getCalibrationRequest();
+            if (req == CalibrationRequest::BASELINE) {
+                calibration->startBaseline();
+                hal.displayClear();
+                calibration->draw(now);
+                Serial.println("Calibration: Set Baseline started");
+            } else if (req == CalibrationRequest::FLAT_CAL) {
+                calibration->startFlatCal();
+                hal.displayClear();
+                calibration->draw(now);
+                Serial.println("Calibration: Flat Cal started");
+            } else {
+                // Normal menu exit
+                displayUI->setScreen(ScreenID::HOME);
+                hal.displayClear();
+                ble_relay::updateConfig(&configStore);
+                Serial.printf("Menu closed. Base: C=%.1f E=%.1f D=%.1f | Tol: C=%.1f E=%.1f D=%.1f\n",
+                    configStore.getCantBaseline(), configStore.getElevationBaseline(),
+                    configStore.getDrawBaseline(), configStore.getCantTolerance(),
+                    configStore.getElevationTolerance(), configStore.getDrawTolerance());
+            }
         }
     } else {
         // Normal mode
@@ -347,8 +392,10 @@ void loop() {
         dispData.tol_elev = configStore.getElevationTolerance();
         dispData.tol_draw = configStore.getDrawTolerance();
 
-        // Draw screen (menu draws itself)
-        if (menu->isActive()) {
+        // Draw screen (menu draws itself on button press)
+        if (calibration->isActive()) {
+            calibration->draw(now);
+        } else if (menu->isActive()) {
             // Menu redraws on button press, not every frame
         } else {
             displayUI->draw(dispData);
