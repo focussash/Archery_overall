@@ -1,0 +1,394 @@
+# Achievements
+
+## Subproject 1: Project Scaffold + HAL + Hello World
+**Status: VERIFIED**
+
+Files created:
+- platformio.ini (3 environments: primary, secondary, native_test)
+- lib/hal/hal_interface.h (abstract HAL interface)
+- lib/hal/hal_m5unified.h/.cpp (M5Unified HAL implementation)
+- src/main_primary.cpp (hello world + IMU serial print)
+- src/main_secondary.cpp (same for secondary role)
+
+Fixes applied during verification:
+- Added `#include <Arduino.h>` to both main_primary.cpp and main_secondary.cpp (Serial was undeclared without it)
+- Installed `intelhex` pip package into PlatformIO's Python env (esptoolpy post-install script failed due to spaces in user path)
+- Added `M5.Imu.update()` call in `hal_m5unified.cpp::readIMU()` — IMU data was stale without it
+- Added `framework =` override in platformio.ini native_test env (inherited `arduino` framework is invalid for native)
+- Installed MinGW via scoop for native test compilation
+
+Verification:
+- [x] `pio run -e primary` compiles — SUCCESS (RAM 7.7%, Flash 36.2%)
+- [x] `pio run -e secondary` compiles — SUCCESS (RAM 7.7%, Flash 36.2%)
+- [x] Upload to device — SUCCESS (primary on COM4)
+- [x] Display shows "Archery Wearable" + "PRIMARY" — confirmed by user
+- [x] Serial shows IMU data, values change when tilted — confirmed by user
+- [x] Battery percentage displays — confirmed by user
+
+## Subproject 2: IMU Math + Sensor Fusion
+**Status: VERIFIED**
+
+Files created:
+- lib/imu_math/complementary_filter.h/.cpp
+- lib/imu_math/imu_math.h/.cpp
+- test/test_imu_math/test_imu_math.cpp (16 native tests)
+
+Fixes applied during verification:
+- Added `#include <cstdint>` to imu_math.h (int16_t was undeclared in native build)
+
+Verification:
+- [x] `pio test -e native_test` — 16/16 tests passed
+- [x] On-device: pitch/roll display updates correctly when tilted — confirmed by user
+
+## Subproject 3: Shot Detection State Machine
+**Status: VERIFIED**
+
+Files created:
+- lib/shot_detect/shot_detect.h/.cpp
+- test/test_shot_detect/test_shot_detect.cpp (8 native tests)
+
+Verification:
+- [x] `pio test -e native_test` — 8/8 tests passed
+- [x] On-device: sharp shake triggers "SHOT DETECTED" + beep — confirmed by user
+- [x] Gentle movements do not trigger false positives
+
+## Subproject 4: Audio Feedback Engine
+**Status: VERIFIED**
+
+Files created:
+- lib/feedback/feedback.h/.cpp (9 patterns, non-blocking player)
+
+Verification:
+- [x] Compiles as part of primary build
+- [x] On-device: all 9 patterns play via BtnA cycling — confirmed by user
+- [x] Patterns are non-blocking (display continues updating while beeping)
+
+## Subproject 5: Shot Buffer (Ring Buffer)
+**Status: NATIVE TESTS VERIFIED**
+
+Files created:
+- lib/shot_buffer/shot_buffer.h/.cpp (template ring buffer + ShotPacket_t)
+- test/test_shot_buffer/test_shot_buffer.cpp (10 native tests)
+
+Fixes applied during verification:
+- Changed `reserved` field from `uint16_t` to `uint32_t` to reach 20-byte BLE target
+
+Verification:
+- [x] `pio test -e native_test` — 10/10 tests passed
+- [x] sizeof(ShotPacket_t) == 20
+
+## Subproject 6: Session Manager + Config Store
+**Status: VERIFIED**
+
+Files created:
+- lib/session/session.h (SessionManager, ConfigStore, FormEvaluation)
+- lib/session/session.cpp (full implementation with NVS persistence)
+
+Implementation details:
+- ConfigStore loads/saves 3 thresholds (cant, elevation, draw) via ESP32 Preferences (NVS)
+- SessionManager tracks state (IDLE/ACTIVE/ENDED), shot count, elapsed time
+- First shot becomes reference baseline; subsequent shots evaluated relative to it
+- Form evaluation sets FORM_FLAG_CANT_OK, FORM_FLAG_ELEVATION_OK, FORM_FLAG_DRAW_OK
+- buildPacket uses imu_math::degreesToCentidegrees for int16 encoding
+- #ifndef NATIVE_TEST guards around NVS calls for future native testability
+
+Verification:
+- [x] Compiles and uploads — SUCCESS (RAM 8.1%, Flash 36.8%)
+- [x] Hold BtnA starts session (rising tone) — confirmed by user
+- [x] Shots during session are counted with form evaluation — confirmed by user
+- [x] Hold BtnA stops session (falling tone) — confirmed by user
+- [ ] NVS persistence across reboot (deferred to SP9 menu system)
+
+## Subproject 7: ESP-NOW Communication
+**Status: VERIFIED**
+
+Files created:
+- lib/espnow_comm/espnow_comm.h (ESPNowPacket 18 bytes, namespace API)
+- lib/espnow_comm/espnow_comm.cpp (broadcast ESP-NOW, magic validation)
+
+Files modified:
+- src/main_secondary.cpp (rewritten: ComplementaryFilter + 50Hz ESP-NOW streaming)
+- src/main_primary.cpp (updated: ESP-NOW receive, secondary data display, drawAngle wiring)
+- claude-memory/DEVELOPMENT_PLAN.md (SP7 section updated with deviations)
+
+Deviations from original plan:
+- Broadcast (FF:FF:FF:FF:FF:FF) with magic 0x41524348 instead of hardcoded MACs
+- Packet reduced to 18 bytes (type, magic, timestamp, pitch, roll, battery) — no raw accel/gyro
+- Added battery field so Primary can display Secondary's battery level
+
+Implementation details:
+- ESP-IDF 4.x callback signature (3-parameter: mac, data, len)
+- Secondary sends at 50Hz (20ms interval), display at 5Hz (200ms)
+- Primary receives via callback, validates magic + size, stores in static buffer
+- isSecondaryConnected() checks 500ms timeout on last received packet
+- drawAngle from Secondary's pitch is wired into session->recordShot()
+- Primary display: top bar shows "Sec P:XX R:XX B:XX%" or "Sec: DISCONNECTED"
+
+Verification:
+- [x] `pio run -e primary` — SUCCESS (RAM 14.8%, Flash 71.5%)
+- [x] `pio run -e secondary` — SUCCESS (RAM 14.4%, Flash 71.3%)
+- [x] Upload primary to device 1, secondary to device 2
+- [x] Primary serial shows both devices' IMU data
+- [x] Moving Secondary → Primary sees angle changes
+- [x] Turn off Secondary → "DISCONNECTED" after 500ms — confirmed by user
+- [x] Turn on Secondary → reconnects automatically — confirmed by user
+- [x] Shots during session use Secondary's draw angle (Draw:3.4 etc. in shot log)
+- [x] Session start/stop works (15 shots in 17s session)
+- [x] Form evaluation flags (Cant/Elev/Draw OK/EXCEEDED) working
+
+## Subproject 8: Integrated Shot Pipeline (Tier 1 MVP)
+**Status: VERIFIED**
+
+Files modified:
+- src/main_primary.cpp (major rewrite: full pipeline wiring)
+- src/main_secondary.cpp (rewrite: shot echo from Primary)
+- lib/espnow_comm/espnow_comm.h (added sendShotNotify, getShotNotify, ESPNowShotNotify)
+- lib/espnow_comm/espnow_comm.cpp (implemented shot notify via MSG_STATUS + broadcast)
+
+Implementation details:
+- Full pipeline: IMU → filter → shot detect → session.recordShot() → form eval → feedback → buffer
+- Primary receives Secondary drawAngle via ESP-NOW, wires into recordShot()
+- Form-based feedback: GOOD_FORM (all ok), CANT_EXCEEDED, DRAW_INCONSISTENT, or SHOT_DETECTED (elev only)
+- Shot notify sent back to Secondary via ESP-NOW (MSG_STATUS, shot_number in battery field)
+- Secondary displays "Shot #N!" echo for 1 second
+- Full display UI on Primary: secondary status bar, pitch/roll, last shot with color-coded form flags, session status, buffer/battery bar
+- BtnA hold = start/stop session, BtnB = debug info
+- Serial output at 10Hz with full telemetry
+
+Verification (from SP7 session — pipeline was live):
+- [x] Compiles: primary and secondary both build
+- [x] Two devices communicating via ESP-NOW
+- [x] Shot detection triggers form eval + appropriate beep
+- [x] Shot count increments on display
+- [x] Serial shows full shot data (timestamp, cant, elev, draw, flags)
+- [x] Session start/stop works via BtnA hold
+- [x] Form eval: tilt exceeding threshold → different beep
+- [x] Shot echo on Secondary display
+- [x] Stability test: basic multi-shot sessions work
+- [ ] Buffer drain verification (deferred to SP10 BLE)
+
+Known issues:
+- Display colors show blue instead of green (RGB/BGR byte order) — deferred to SP9 display UI
+
+## Subproject 9: Display UI + Menu + Threshold Configuration
+**Status: VERIFIED**
+
+Files created:
+- lib/display_ui/display_ui.h/.cpp (DisplayUI class, 3 screens + Color constants)
+- lib/menu/menu.h/.cpp (Menu class, scrollable 7-item menu)
+
+Files modified:
+- lib/session/session.h/.cpp (ConfigStore: 3 thresholds → 6 values: 3 baselines + 3 tolerances; removed first-shot reference from SessionManager)
+- src/main_primary.cpp (integrated DisplayUI + Menu, new button scheme)
+- claude-memory/DEVELOPMENT_PLAN.md (updated SP6 and SP9 sections)
+
+Implementation details:
+- 3 display screens: HOME (overview), LIVE (real-time angles), SESSION (shot detail + config reference)
+- MENU screen rendered by Menu module with scrolling (4 visible items)
+- 6 configurable values: Cant/Elev/Draw baselines + tolerances
+- Form eval changed from first-shot reference to: |measured - baseline| <= tolerance
+- Button scheme: BtnA tap = cycle screens, BtnA hold = start/stop session, BtnB tap = open menu
+- Menu editing: BtnA = +0.5°, BtnB = -0.5°, auto-exit after 2s idle
+- NVS keys: cant_base, cant_tol, elev_base, elev_tol, draw_base, draw_tol
+- Default baselines: 0°. Default tolerances: 5° / 10° / 15°
+
+Deviations from original plan:
+- Baseline+tolerance replaces simple thresholds (user-requested)
+- Auto-timeout editing replaces hold-to-exit (wasPressed/wasHold conflict on M5Unified)
+- Color issue (blue vs green) still present — likely panel-specific, cosmetic only
+
+Verification:
+- [x] Compiles — SUCCESS (RAM 14.9%, Flash 72.2%)
+- [x] Screen cycling via BtnA tap — HOME/LIVE/SESSION
+- [x] Menu entry via BtnB, scrolling through 7 items
+- [x] Threshold adjustment: A=+0.5, B=-0.5, auto-exit after 2s
+- [x] NVS persistence across reboot — confirmed by user
+- [x] Color coding on SESSION screen (green=OK, red=OVER)
+- [x] Form eval uses baselines+tolerances correctly
+- [x] Session start/stop still works via BtnA hold
+
+## Subproject 10: BLE GATT Relay
+**Status: VERIFIED**
+
+Files created:
+- lib/ble_relay/ble_relay.h (GATT service UUIDs, BleDeviceStatus, BleConfigPacket, BleCommand structs)
+- lib/ble_relay/ble_relay.cpp (NimBLE GATT server with 4 characteristics)
+
+Files modified:
+- platformio.ini (added NimBLE-Arduino dep, huge_app.csv partition, NimBLE role flags)
+- src/main_primary.cpp (integrated BLE init, shot sending, buffer drain, status updates, phone commands)
+
+Implementation details:
+- NimBLE GATT server with custom UUID base: 4152Cxxx-0001-1000-8000-00805F9B34FB
+- 4 characteristics: Shot Data (notify), Session Control (write), Device Status (read+notify), Config (read+write)
+- Buffer drain triggered on client subscribe to shot notifications (not on connect)
+- BLE device status updated every 2 seconds (battery, IMU, secondary connection, session state, shot count)
+- Phone can start/stop session and push config changes via BLE writes
+- Config sync: phone writes 24 bytes (6 floats) → ConfigStore updated + NVS saved
+
+Flash optimization applied:
+- Switched partition from default.csv (1,280KB app + 1,280KB OTA) to huge_app.csv (3,072KB app, no OTA)
+- Disabled unused NimBLE roles: CONFIG_BT_NIMBLE_ROLE_CENTRAL=0, CONFIG_BT_NIMBLE_ROLE_OBSERVER=0
+- Result: flash usage dropped from 91.5% to 37.8%
+
+Fixes applied during verification:
+- BLE advertising packet was too large (38 bytes > 31 byte limit) — split name into adv data, service UUID into scan response
+- Buffer drain was firing on connect (before client subscribed to notifications) — changed to trigger on subscribe via onSubscribe callback
+- Added BLE init error checking and status indicator in serial output
+
+Build results:
+- [x] `pio run -e primary` — SUCCESS (RAM 17.9%, Flash 37.8%)
+- [x] `pio run -e secondary` — SUCCESS (unchanged, no BLE dependency)
+
+Verification:
+- [x] Device appears as "ArcheryWearable" in BLE scan (nRF Connect app)
+- [x] Connect → see service and 4 characteristics
+- [x] Simulate shots → see 20-byte notifications
+- [x] Write 0x01 to Session Control → session starts on device (rising tone)
+- [x] Write 0x02 to Session Control → session stops (falling tone)
+- [x] Disconnect → reconnect → subscribe → buffered shots drain
+- [x] ESP-NOW still works while BLE is connected (Secondary visible on Primary + shot notifications to phone simultaneously)
+
+## Subproject 11: Pre-Shot Routine Timer
+**Status: VERIFIED**
+
+Files created:
+- lib/cadence/cadence.h (CadenceTracker class, CadenceResult struct)
+- lib/cadence/cadence.cpp (rolling average over 16-shot circular buffer, deviation detection)
+- test/test_cadence/test_cadence.cpp (9 native tests — blocked by MinGW 15.2.0 toolchain issue)
+
+Files modified:
+- lib/shot_detect/shot_detect.h (added ShotTiming struct, getLastTiming(), timing tracking members)
+- lib/shot_detect/shot_detect.cpp (recordTiming() computes draw/hold/total durations from state transitions)
+- src/main_primary.cpp (integrated CadenceTracker, cadence alerts override form feedback, reset on session start)
+
+Implementation details:
+- ShotTiming: draw_ms (DRAW_DETECTED duration), hold_ms (HOLD duration), total_ms (raise-to-release)
+- CadenceTracker: 16-shot circular buffer, configurable min_shots (5) and deviation threshold (30%)
+- Compares current shot against rolling average of prior shots
+- RUSHING: total_ms < avg * (1 - threshold) → fast descending beep pattern
+- HOLDING_TOO_LONG: hold_ms > avg * (1 + threshold) → slow ascending beep pattern
+- Cadence alerts take priority over form feedback in beep selection
+- Snap shots (T:0ms, from IDLE) are skipped in cadence tracking
+- Cadence resets on session start (button or BLE command)
+- Timing data printed in serial: T:___ms D:___ms H:___ms Avg:___ms Dev:___%
+
+Known issues:
+- Native tests blocked by MinGW g++ 15.2.0 cc1plus.exe silently crashing (toolchain issue, not code)
+- MinGW was updated via scoop on 2026-02-13, all native_test environments affected
+
+Build results:
+- [x] `pio run -e primary` — SUCCESS (RAM 17.9%, Flash 37.8%)
+
+Verification:
+- [x] Timing data (draw/hold/total) appears in serial output for each shot
+- [x] After 5 shots, deviation percentage shown (Avg and Dev fields)
+- [x] Consistent timing → no extra alerts (shot 8: -13%, within threshold)
+- [x] Fast shots → RUSHING! detected with distinct descending beep (shots 6,7,9)
+- [x] Long hold → HOLD_LONG! detected with distinct ascending beep (shot 16: 454%)
+- [x] Different beep patterns audibly confirmed by user
+
+## Subproject 12: Real-Time Form Check + Feature Toggles + Menu Restructure + Color Fix
+**Status: VERIFIED (2 deferred items: serial [FormCheck] events, BLE 26-byte config)**
+
+Files created:
+- lib/form_check/form_check.h (FormChecker class, FormCheckEvent enum)
+- lib/form_check/form_check.cpp (state transition tracking, alignment checking)
+
+Files modified:
+- lib/feedback/feedback.h (added DRAW_NOTIFY, FORM_ALIGNED, FORM_DEVIATED patterns)
+- lib/feedback/feedback.cpp (3 new pattern definitions added to PATTERNS[])
+- lib/session/session.h (added feature toggle getters/setters to ConfigStore)
+- lib/session/session.cpp (NVS load/save for form_chk and shot_fb toggle keys)
+- lib/menu/menu.h (rewritten: MenuLevel enum, two-level hierarchy with ParentItem/FeatureItem/ParamItem)
+- lib/menu/menu.cpp (rewritten: parent menu + Feature Settings sub-menu + Param Settings sub-menu)
+- lib/ble_relay/ble_relay.h (BleConfigPacket extended from 24 to 26 bytes with toggle fields)
+- lib/ble_relay/ble_relay.cpp (updateConfig/applyReceivedConfig handle toggle fields)
+- src/main_primary.cpp (FormChecker integration, conditional feedback, toast display, resets on session/shot)
+- src/main_secondary.cpp (replaced hardcoded RGB565 colors with Color:: constants)
+- lib/display_ui/display_ui.h (Color namespace: RGB565 → RGB888; added toast fields to DisplayData; added drawToast)
+- lib/display_ui/display_ui.cpp (added drawToast method for temporary status messages)
+- lib/hal/hal_m5unified.cpp (added setColorDepth(24) in init — fixes color rendering)
+- claude-memory/DEVELOPMENT_PLAN.md (SP12 inserted, old SP12 renumbered to SP13)
+
+Implementation details:
+- FormChecker monitors ShotDetector state transitions, fires events only on changes
+- DRAW_STARTED: when entering DRAW_DETECTED (1500Hz 40ms blip)
+- FORM_ALIGNED: when entering HOLD with good form or regaining alignment (2200Hz double-blip)
+- FORM_DEVIATED: when angles drift outside tolerance during HOLD (1000Hz 60ms blip)
+- Feature toggles: form_check_enabled (NVS key "form_chk"), shot_feedback_enabled (NVS key "shot_fb")
+- Menu restructured: Parent (Features/Params/Exit) → Feature Settings (Form Check/Shot Feedback/Back) → Param Settings (6 values + Back)
+- BLE config packet grew from 24 to 26 bytes (2 uint8_t toggle fields appended)
+- Toast display: temporary color-coded text overlay for all beep events (1.5-2s duration)
+- Display color fix: setColorDepth(24) + RGB888 constants resolves long-standing color issue
+
+Display color fix:
+- Root cause: LovyanGFX in 16-bit mode misinterprets uint32_t color values for M5StickC panels
+- Fix: M5.Display.setColorDepth(24) forces proper RGB888 conversion pipeline
+- All Color:: constants changed from RGB565 (e.g. 0xF800) to RGB888 (e.g. 0xFF0000)
+- All hardcoded hex colors in src/ replaced with Color:: constants
+- Resolves the "blue instead of green" issue that existed since SP8
+
+Build results:
+- [x] `pio run -e primary` — SUCCESS (RAM 17.9%, Flash 37.9%)
+- [x] `pio run -e secondary` — SUCCESS
+
+Verification:
+- [x] Menu: BtnB opens parent menu with 3 items (Features/Params/Save&Exit)
+- [x] Feature Settings: toggle Form Check ON/OFF, toggle Shot Feedback ON/OFF
+- [x] Form Check events display toast messages with correct colors
+- [x] Display colors now correct (green=green, red=red, cyan=cyan)
+- [x] Param Settings: same as before (6 params + Back) — verified by user
+- [x] Settings persist across reboot (NVS) — verified by user
+- [x] Form Check with secondary connected (draw angle evaluation) — verified by user
+- [x] Shot Feedback ON/OFF toggle — verified by user
+- [ ] Serial output shows [FormCheck] events (deferred)
+- [ ] BLE: 26-byte config characteristic (deferred)
+
+## Subproject 13: IMU Calibration + Usage Manual
+**Status: CODE COMPLETE — AWAITING ON-DEVICE VERIFICATION**
+
+Files created:
+- lib/calibration/calibration.h (CalibrationManager class, CalibrationState/CalibrationRequest enums)
+- lib/calibration/calibration.cpp (state machine: prompt → countdown → capture → done → idle)
+- claude-memory/USAGE_MANUAL.md (comprehensive device usage manual)
+
+Files modified:
+- lib/session/session.h (added 3 accel bias fields: cal_ax_bias_, cal_ay_bias_, cal_az_bias_ with getters/setters)
+- lib/session/session.cpp (NVS load/save for cal_ax, cal_ay, cal_az keys; defaults to 0.0f)
+- lib/menu/menu.h (added MenuLevel::CALIBRATE, ParentItem::CALIBRATE, CalibrateItem enum, CalibrationRequest member)
+- lib/menu/menu.cpp (added Calibrate sub-menu: Set Base / Flat Cal / Back; cal_request_ handoff pattern)
+- src/main_primary.cpp (accel bias subtraction pre-filter, CalibrationManager integration, button routing priority chain)
+- platformio.ini (added calibration to native_test lib_ignore)
+
+Implementation details:
+- **Set Baseline** flow: prompt → 5s countdown (get into form) → 2s capture (average pitch/roll/drawAngle) → save to ConfigStore baselines → display results → idle
+- **Flat Cal** flow: prompt → 3s countdown (keep device flat) → 2s capture (average raw accel) → compute bias as avg - expected gravity (0,0,1) → save to ConfigStore bias → display results → idle
+- Accel bias applied PRE-FILTER: raw accel values have bias subtracted before ComplementaryFilter.update()
+- Menu-to-calibration handoff: Menu sets CalibrationRequest flag, exits, main loop checks flag and starts calibration
+- Button priority chain: calibration active → menu active → normal mode
+- Calibration update() runs every loop tick (not just at 10Hz) for maximum sample accumulation
+- Calibration draw() runs at 10Hz inside display block
+- On calibration complete: BLE config synced, results printed to serial
+- Cancel: Button B during any state returns to IDLE without saving
+
+Substeps completed:
+- [x] 13.1: Accel bias fields added to ConfigStore (session.h/session.cpp)
+- [x] 13.2: Bias subtraction applied in main_primary.cpp before filter.update()
+- [x] 13.3: CalibrationManager module created (calibration.h/calibration.cpp)
+- [x] 13.4: Calibrate sub-menu added to Menu (menu.h/menu.cpp)
+- [x] 13.5: CalibrationManager integrated in main_primary.cpp (button routing, display, BLE sync)
+- [x] 13.6: Usage manual written (claude-memory/USAGE_MANUAL.md)
+
+Build results:
+- [x] `pio run -e primary` — SUCCESS (RAM 18.0%, Flash 38.1%)
+
+Verification (on-device — pending):
+- [ ] Menu shows 4 parent items: Features, Params, Calibrate, Save&Exit
+- [ ] Calibrate sub-menu: Set Base, Flat Cal, Back
+- [ ] Set Baseline: countdown 5→1, "Capturing...", "Saved! C:X.X E:X.X D:X.X", returns to HOME
+- [ ] Set Baseline with Secondary: draw baseline captures Secondary's pitch
+- [ ] Flat Cal: "Place flat", countdown 3→1, "Sampling...", "Bias saved!", returns to HOME
+- [ ] Cancel (BtnB) during any state returns to HOME without saving
+- [ ] Baseline + bias values survive reboot (serial output confirms)
+- [ ] After Flat Cal, pitch/roll closer to 0 when device is flat
